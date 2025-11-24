@@ -1,0 +1,496 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Create GitHub Release
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create-release.outputs.id }}
+      upload_url: ${{ steps.create-release.outputs.upload_url }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Get version from tag
+      id: get_version
+      run: |
+        echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Generate changelog from git commits since last tag
+        if git describe --tags --abbrev=0 HEAD~1 >/dev/null 2>&1; then
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1)
+          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+          echo "## What's Changed" >> $GITHUB_OUTPUT
+          git log --pretty=format:"* %s (%h)" $PREV_TAG..HEAD >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+        else
+          echo "CHANGELOG=Initial release" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Create Release
+      id: create-release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.get_version.outputs.TAG_NAME }}
+        release_name: RepoSentry ${{ steps.get_version.outputs.VERSION }}
+        body: |
+          # RepoSentry ${{ steps.get_version.outputs.VERSION }}
+
+          ${{ steps.changelog.outputs.CHANGELOG }}
+
+          ## Installation
+
+          ### Binary Downloads
+          Download the appropriate binary for your platform:
+          - **Linux (x86_64)**: `reposentry-${{ steps.get_version.outputs.VERSION }}-x86_64-unknown-linux-gnu.tar.gz`
+          - **Linux (ARM64)**: `reposentry-${{ steps.get_version.outputs.VERSION }}-aarch64-unknown-linux-gnu.tar.gz`
+          - **macOS (Intel)**: `reposentry-${{ steps.get_version.outputs.VERSION }}-x86_64-apple-darwin.tar.gz`
+          - **macOS (Apple Silicon)**: `reposentry-${{ steps.get_version.outputs.VERSION }}-aarch64-apple-darwin.tar.gz`
+          - **Windows (x86_64)**: `reposentry-${{ steps.get_version.outputs.VERSION }}-x86_64-pc-windows-msvc.zip`
+
+          ### Package Managers
+
+          #### Using eget (Recommended)
+          ```bash
+          # Install latest version
+          eget MKSG-MugunthKumar/RepoSentry --to ~/.local/bin/
+
+          # Install specific version
+          eget MKSG-MugunthKumar/RepoSentry --tag=${{ steps.get_version.outputs.TAG_NAME }} --to ~/.local/bin/
+          ```
+
+          #### Linux Packages
+          ```bash
+          # Debian/Ubuntu
+          wget https://github.com/MKSG-MugunthKumar/RepoSentry/releases/download/${{ steps.get_version.outputs.TAG_NAME }}/reposentry_${{ steps.get_version.outputs.VERSION }}_amd64.deb
+          sudo dpkg -i reposentry_${{ steps.get_version.outputs.VERSION }}_amd64.deb
+
+          # RHEL/CentOS/Fedora
+          wget https://github.com/MKSG-MugunthKumar/RepoSentry/releases/download/${{ steps.get_version.outputs.TAG_NAME }}/reposentry-${{ steps.get_version.outputs.VERSION }}-1.x86_64.rpm
+          sudo rpm -i reposentry-${{ steps.get_version.outputs.VERSION }}-1.x86_64.rpm
+
+          # AppImage (Universal Linux)
+          wget https://github.com/MKSG-MugunthKumar/RepoSentry/releases/download/${{ steps.get_version.outputs.TAG_NAME }}/RepoSentry-${{ steps.get_version.outputs.VERSION }}-x86_64.AppImage
+          chmod +x RepoSentry-${{ steps.get_version.outputs.VERSION }}-x86_64.AppImage
+          ./RepoSentry-${{ steps.get_version.outputs.VERSION }}-x86_64.AppImage
+          ```
+
+          #### macOS
+          ```bash
+          # Download DMG
+          wget https://github.com/MKSG-MugunthKumar/RepoSentry/releases/download/${{ steps.get_version.outputs.TAG_NAME }}/RepoSentry-${{ steps.get_version.outputs.VERSION }}.dmg
+          ```
+
+          #### Windows
+          ```powershell
+          # Download installer
+          Invoke-WebRequest -Uri "https://github.com/MKSG-MugunthKumar/RepoSentry/releases/download/${{ steps.get_version.outputs.TAG_NAME }}/RepoSentry-${{ steps.get_version.outputs.VERSION }}-installer.exe" -OutFile "RepoSentry-installer.exe"
+          ```
+
+          ## Getting Started
+
+          After installation:
+          ```bash
+          # Initialize and setup
+          reposentry init
+
+          # Verify installation
+          reposentry doctor
+
+          # Start syncing
+          reposentry sync --dry-run
+          reposentry sync
+          ```
+
+          For detailed configuration options, see the [Configuration Guide](https://github.com/MKSG-MugunthKumar/RepoSentry/blob/main/docs/CONFIGURATION.md).
+        draft: false
+        prerelease: false
+
+  # Build binaries for multiple platforms
+  build-binaries:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+          # macOS
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+          # Windows
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        target: ${{ matrix.target }}
+        override: true
+
+    - name: Install cross
+      if: matrix.cross
+      run: cargo install cross
+
+    - name: Build binary
+      run: |
+        if [ "${{ matrix.cross }}" = "true" ]; then
+          cross build --release --target ${{ matrix.target }}
+        else
+          cargo build --release --target ${{ matrix.target }}
+        fi
+      shell: bash
+
+    - name: Package binary (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        cd target/${{ matrix.target }}/release
+        tar czf ../../../reposentry-${{ github.ref_name }}-${{ matrix.target }}.tar.gz reposentry
+        cd ../../..
+
+    - name: Package binary (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        cd target/${{ matrix.target }}/release
+        7z a ../../../reposentry-${{ github.ref_name }}-${{ matrix.target }}.zip reposentry.exe
+        cd ../../..
+
+    - name: Upload binary (Unix)
+      if: runner.os != 'Windows'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./reposentry-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+        asset_name: reposentry-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+        asset_content_type: application/gzip
+
+    - name: Upload binary (Windows)
+      if: runner.os == 'Windows'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./reposentry-${{ github.ref_name }}-${{ matrix.target }}.zip
+        asset_name: reposentry-${{ github.ref_name }}-${{ matrix.target }}.zip
+        asset_content_type: application/zip
+
+  # Build Linux packages (deb, rpm, AppImage)
+  build-linux-packages:
+    needs: create-release
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+
+    - name: Install packaging dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libc6-dev pkg-config libssl-dev
+
+    - name: Install cargo-deb and cargo-generate-rpm
+      run: |
+        cargo install cargo-deb
+        cargo install cargo-generate-rpm
+
+    - name: Build release binary
+      run: cargo build --release
+
+    - name: Build Debian package
+      run: |
+        cargo deb
+        # Find and rename the deb file
+        DEB_FILE=$(find target/debian -name "*.deb" | head -1)
+        VERSION=$(echo ${{ github.ref_name }} | sed 's/^v//')
+        cp "$DEB_FILE" "reposentry_${VERSION}_amd64.deb"
+
+    - name: Build RPM package
+      run: |
+        cargo generate-rpm
+        # Find and rename the rpm file
+        RPM_FILE=$(find target/generate-rpm -name "*.rpm" | head -1)
+        VERSION=$(echo ${{ github.ref_name }} | sed 's/^v//')
+        cp "$RPM_FILE" "reposentry-${VERSION}-1.x86_64.rpm"
+
+    - name: Build AppImage
+      run: |
+        # Download appimagetool
+        wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+        chmod +x appimagetool-x86_64.AppImage
+
+        # Create AppDir structure
+        mkdir -p AppDir/usr/bin
+        mkdir -p AppDir/usr/share/applications
+        mkdir -p AppDir/usr/share/icons/hicolor/512x512/apps
+
+        # Copy binary
+        cp target/release/reposentry AppDir/usr/bin/
+
+        # Create desktop file
+        cat > AppDir/reposentry.desktop << EOF
+        [Desktop Entry]
+        Name=RepoSentry
+        Exec=reposentry
+        Icon=reposentry
+        Type=Application
+        Categories=Development;
+        Comment=Intelligent git repository synchronization daemon
+        EOF
+
+        # Create a simple icon (you might want to replace with actual icon)
+        echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==" | base64 -d > AppDir/usr/share/icons/hicolor/512x512/apps/reposentry.png
+
+        # Copy desktop file to root
+        cp AppDir/reposentry.desktop AppDir/
+
+        # Create AppImage
+        VERSION=$(echo ${{ github.ref_name }} | sed 's/^v//')
+        ./appimagetool-x86_64.AppImage AppDir "RepoSentry-${VERSION}-x86_64.AppImage"
+
+    - name: Upload Debian package
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./reposentry_${{ steps.get_version.outputs.VERSION }}_amd64.deb
+        asset_name: reposentry_${{ steps.get_version.outputs.VERSION }}_amd64.deb
+        asset_content_type: application/vnd.debian.binary-package
+
+    - name: Upload RPM package
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./reposentry-${{ steps.get_version.outputs.VERSION }}-1.x86_64.rpm
+        asset_name: reposentry-${{ steps.get_version.outputs.VERSION }}-1.x86_64.rpm
+        asset_content_type: application/x-rpm
+
+    - name: Upload AppImage
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./RepoSentry-${{ steps.get_version.outputs.VERSION }}-x86_64.AppImage
+        asset_name: RepoSentry-${{ steps.get_version.outputs.VERSION }}-x86_64.AppImage
+        asset_content_type: application/octet-stream
+
+  # Build macOS DMG
+  build-macos-dmg:
+    needs: create-release
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+
+    - name: Build universal binary
+      run: |
+        # Build for both architectures
+        rustup target add x86_64-apple-darwin
+        rustup target add aarch64-apple-darwin
+
+        cargo build --release --target x86_64-apple-darwin
+        cargo build --release --target aarch64-apple-darwin
+
+        # Create universal binary
+        lipo -create \
+          target/x86_64-apple-darwin/release/reposentry \
+          target/aarch64-apple-darwin/release/reposentry \
+          -output reposentry-universal
+
+    - name: Create DMG
+      run: |
+        VERSION=$(echo ${{ github.ref_name }} | sed 's/^v//')
+
+        # Create temporary directory structure
+        mkdir -p dmg-contents/Applications
+        mkdir -p dmg-contents/RepoSentry.app/Contents/MacOS
+        mkdir -p dmg-contents/RepoSentry.app/Contents/Resources
+
+        # Copy binary
+        cp reposentry-universal dmg-contents/RepoSentry.app/Contents/MacOS/reposentry
+        chmod +x dmg-contents/RepoSentry.app/Contents/MacOS/reposentry
+
+        # Create Info.plist
+        cat > dmg-contents/RepoSentry.app/Contents/Info.plist << EOF
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>CFBundleExecutable</key>
+          <string>reposentry</string>
+          <key>CFBundleIdentifier</key>
+          <string>sg.mk.reposentry</string>
+          <key>CFBundleName</key>
+          <string>RepoSentry</string>
+          <key>CFBundleVersion</key>
+          <string>${VERSION}</string>
+          <key>CFBundleShortVersionString</key>
+          <string>${VERSION}</string>
+        </dict>
+        </plist>
+        EOF
+
+        # Create symbolic link to Applications
+        ln -s /Applications dmg-contents/Applications
+
+        # Create DMG
+        hdiutil create -volname "RepoSentry ${VERSION}" \
+          -srcfolder dmg-contents \
+          -ov -format UDZO \
+          "RepoSentry-${VERSION}.dmg"
+
+    - name: Upload DMG
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./RepoSentry-${{ steps.get_version.outputs.VERSION }}.dmg
+        asset_name: RepoSentry-${{ steps.get_version.outputs.VERSION }}.dmg
+        asset_content_type: application/x-apple-diskimage
+
+  # Build Windows installer
+  build-windows-installer:
+    needs: create-release
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+
+    - name: Build release binary
+      run: cargo build --release
+
+    - name: Install NSIS
+      run: |
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -Uri "https://downloads.sourceforge.net/project/nsis/NSIS%203/3.09/nsis-3.09-setup.exe" -OutFile "nsis-setup.exe"
+        Start-Process -FilePath "nsis-setup.exe" -Args "/S" -Wait
+        echo "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+    - name: Create installer script
+      run: |
+        $VERSION = ("${{ github.ref_name }}" -replace '^v', '')
+        @"
+        !include "MUI2.nsh"
+
+        Name "RepoSentry"
+        OutFile "RepoSentry-${VERSION}-installer.exe"
+        InstallDir `$PROGRAMFILES64\RepoSentry
+        RequestExecutionLevel admin
+
+        !define MUI_ABORTWARNING
+        !insertmacro MUI_PAGE_WELCOME
+        !insertmacro MUI_PAGE_LICENSE "LICENSE"
+        !insertmacro MUI_PAGE_DIRECTORY
+        !insertmacro MUI_PAGE_INSTFILES
+        !insertmacro MUI_PAGE_FINISH
+
+        !insertmacro MUI_UNPAGE_WELCOME
+        !insertmacro MUI_UNPAGE_CONFIRM
+        !insertmacro MUI_UNPAGE_INSTFILES
+        !insertmacro MUI_UNPAGE_FINISH
+
+        !insertmacro MUI_LANGUAGE "English"
+
+        Section "RepoSentry" SEC01
+          SetOutPath `$INSTDIR
+          File "target\release\reposentry.exe"
+          File "README.md"
+          File "LICENSE"
+
+          # Add to PATH
+          EnVar::AddValue "PATH" `$INSTDIR
+
+          WriteUninstaller `$INSTDIR\uninstall.exe
+
+          # Create Start Menu shortcuts
+          CreateDirectory "`$SMPROGRAMS\RepoSentry"
+          CreateShortCut "`$SMPROGRAMS\RepoSentry\RepoSentry.lnk" `$INSTDIR\reposentry.exe
+          CreateShortCut "`$SMPROGRAMS\RepoSentry\Uninstall.lnk" `$INSTDIR\uninstall.exe
+        SectionEnd
+
+        Section "Uninstall"
+          Delete `$INSTDIR\reposentry.exe
+          Delete `$INSTDIR\README.md
+          Delete `$INSTDIR\LICENSE
+          Delete `$INSTDIR\uninstall.exe
+
+          # Remove from PATH
+          EnVar::DeleteValue "PATH" `$INSTDIR
+
+          # Remove Start Menu shortcuts
+          Delete "`$SMPROGRAMS\RepoSentry\RepoSentry.lnk"
+          Delete "`$SMPROGRAMS\RepoSentry\Uninstall.lnk"
+          RMDir "`$SMPROGRAMS\RepoSentry"
+
+          RMDir `$INSTDIR
+        SectionEnd
+        "@ | Out-File -FilePath "installer.nsi" -Encoding UTF8
+
+    - name: Build installer
+      run: makensis installer.nsi
+
+    - name: Upload installer
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./RepoSentry-${{ steps.get_version.outputs.VERSION }}-installer.exe
+        asset_name: RepoSentry-${{ steps.get_version.outputs.VERSION }}-installer.exe
+        asset_content_type: application/vnd.microsoft.portable-executable

@@ -4,9 +4,9 @@
 //! in the background with configurable sync intervals, PID file management,
 //! and graceful shutdown handling.
 
-use crate::Config;
 use crate::sync::{SyncEngine, SyncSummary};
-use anyhow::{Result, Context};
+use crate::Config;
+use anyhow::{Context, Result};
 // Helper function to parse duration strings like "30m", "1h", etc.
 fn parse_daemon_duration(duration_str: &str) -> Result<u64> {
     let duration_str = duration_str.trim().to_lowercase();
@@ -14,24 +14,35 @@ fn parse_daemon_duration(duration_str: &str) -> Result<u64> {
     if let Some(value) = duration_str.strip_suffix('s') {
         value.parse::<u64>().context("Invalid seconds value")
     } else if let Some(value) = duration_str.strip_suffix('m') {
-        value.parse::<u64>().map(|v| v * 60).context("Invalid minutes value")
+        value
+            .parse::<u64>()
+            .map(|v| v * 60)
+            .context("Invalid minutes value")
     } else if let Some(value) = duration_str.strip_suffix('h') {
-        value.parse::<u64>().map(|v| v * 3600).context("Invalid hours value")
+        value
+            .parse::<u64>()
+            .map(|v| v * 3600)
+            .context("Invalid hours value")
     } else if let Some(value) = duration_str.strip_suffix('d') {
-        value.parse::<u64>().map(|v| v * 86400).context("Invalid days value")
+        value
+            .parse::<u64>()
+            .map(|v| v * 86400)
+            .context("Invalid days value")
     } else {
         // Try to parse as raw seconds
-        duration_str.parse::<u64>().context("Invalid duration format. Use format like '30m', '1h', '2d'")
+        duration_str
+            .parse::<u64>()
+            .context("Invalid duration format. Use format like '30m', '1h', '2d'")
     }
 }
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use tokio::time::interval;
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 
 /// Daemon state and control
 pub struct Daemon {
@@ -58,7 +69,8 @@ impl Daemon {
     /// Create a new daemon instance
     pub async fn new(config: Config) -> Result<Self> {
         let config = Arc::new(config);
-        let sync_engine = SyncEngine::new(config.as_ref().clone()).await
+        let sync_engine = SyncEngine::new(config.as_ref().clone())
+            .await
             .context("Failed to create sync engine for daemon")?;
 
         let (shutdown_sender, _) = broadcast::channel(1);
@@ -136,12 +148,10 @@ impl Daemon {
         }
 
         if let Some(log_file) = log_file {
-            daemonize = daemonize.stdout(log_file.try_clone()?)
-                .stderr(log_file);
+            daemonize = daemonize.stdout(log_file.try_clone()?).stderr(log_file);
         }
 
-        daemonize.start()
-            .context("Failed to daemonize process")?;
+        daemonize.start().context("Failed to daemonize process")?;
 
         info!("RepoSentry daemon started as background service");
         Ok(())
@@ -153,11 +163,9 @@ impl Daemon {
 
         if let Some(pid_file) = &self.pid_file_path {
             if pid_file.exists() {
-                let pid_str = fs::read_to_string(pid_file)
-                    .context("Failed to read PID file")?;
+                let pid_str = fs::read_to_string(pid_file).context("Failed to read PID file")?;
 
-                let pid: u32 = pid_str.trim().parse()
-                    .context("Invalid PID in PID file")?;
+                let pid: u32 = pid_str.trim().parse().context("Invalid PID in PID file")?;
 
                 #[cfg(unix)]
                 {
@@ -278,12 +286,10 @@ impl Daemon {
 
             // Create parent directories if they don't exist
             if let Some(parent) = pid_file.parent() {
-                fs::create_dir_all(parent)
-                    .context("Failed to create PID file directory")?;
+                fs::create_dir_all(parent).context("Failed to create PID file directory")?;
             }
 
-            fs::write(pid_file, pid.to_string())
-                .context("Failed to write PID file")?;
+            fs::write(pid_file, pid.to_string()).context("Failed to write PID file")?;
 
             info!("PID file written: {} (PID: {})", pid_file.display(), pid);
         }
@@ -295,8 +301,7 @@ impl Daemon {
     fn cleanup(&self) -> Result<()> {
         if let Some(pid_file) = &self.pid_file_path {
             if pid_file.exists() {
-                fs::remove_file(pid_file)
-                    .context("Failed to remove PID file")?;
+                fs::remove_file(pid_file).context("Failed to remove PID file")?;
                 info!("PID file removed: {}", pid_file.display());
             }
         }
@@ -326,37 +331,33 @@ impl Daemon {
 
 /// Helper to create daemon from default config
 pub async fn create_daemon_from_config() -> Result<Daemon> {
-    let config = Config::load_or_default()
-        .context("Failed to load configuration for daemon")?;
+    let config = Config::load_or_default().context("Failed to load configuration for daemon")?;
 
-    Daemon::new(config).await
-        .context("Failed to create daemon")
+    Daemon::new(config).await.context("Failed to create daemon")
 }
 
 /// Check if daemon is currently running by checking PID file
 pub fn is_daemon_running(config: &Config) -> Result<bool> {
     if !config.daemon.pid_file.is_empty() {
-        let expanded_path = shellexpand::full(&config.daemon.pid_file)
-            .context("Failed to expand PID file path")?;
+        let expanded_path =
+            shellexpand::full(&config.daemon.pid_file).context("Failed to expand PID file path")?;
         let pid_file = PathBuf::from(expanded_path.as_ref());
 
         if pid_file.exists() {
-            let pid_str = fs::read_to_string(&pid_file)
-                .context("Failed to read PID file")?;
+            let pid_str = fs::read_to_string(&pid_file).context("Failed to read PID file")?;
 
-            let pid: u32 = pid_str.trim().parse()
-                .context("Invalid PID in PID file")?;
+            let pid: u32 = pid_str.trim().parse().context("Invalid PID in PID file")?;
 
             // Check if process is actually running
             #[cfg(unix)]
             {
+                use nix::errno::Errno;
                 use nix::sys::signal;
                 use nix::unistd::Pid;
-                use nix::errno::Errno;
 
                 let pid = Pid::from_raw(pid as i32);
                 match signal::kill(pid, None) {
-                    Ok(_) => return Ok(true),  // Process exists
+                    Ok(_) => return Ok(true), // Process exists
                     Err(Errno::ESRCH) => {
                         // Process doesn't exist, remove stale PID file
                         let _ = fs::remove_file(&pid_file);
@@ -394,7 +395,9 @@ mod tests {
             }
             Err(e) => {
                 // Expected if authentication is not available
-                assert!(e.to_string().contains("authentication") || e.to_string().contains("GitHub"));
+                assert!(
+                    e.to_string().contains("authentication") || e.to_string().contains("GitHub")
+                );
             }
         }
     }

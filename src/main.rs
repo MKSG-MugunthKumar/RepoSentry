@@ -3,9 +3,9 @@ use clap::{Parser, Subcommand};
 use tracing::info;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use reposentry::{Config, GitHubClient, SyncEngine, Daemon};
 use reposentry::daemon::is_daemon_running;
 use reposentry::github::auth_setup;
+use reposentry::{Config, Daemon, GitHubClient, SyncEngine};
 
 #[derive(Parser)]
 #[command(name = "reposentry")]
@@ -149,35 +149,28 @@ async fn main() -> Result<()> {
 
     // Execute command
     match cli.command {
-        Commands::Init { base_dir, skip_auth } => {
-            cmd_init(base_dir, skip_auth, &config).await
-        }
-        Commands::Auth { auth_command } => {
-            cmd_auth(auth_command, &config).await
-        }
-        Commands::Sync { dry_run, force, org } => {
-            cmd_sync(dry_run, force, org, &config).await
-        }
-        Commands::List { details, org } => {
-            cmd_list(details, org, &config).await
-        }
-        Commands::Daemon { daemon_command } => {
-            cmd_daemon(daemon_command, &config).await
-        }
-        Commands::Doctor { component } => {
-            cmd_doctor(component, &config).await
-        }
+        Commands::Init {
+            base_dir,
+            skip_auth,
+        } => cmd_init(base_dir, skip_auth, &config).await,
+        Commands::Auth { auth_command } => cmd_auth(auth_command, &config).await,
+        Commands::Sync {
+            dry_run,
+            force,
+            org,
+        } => cmd_sync(dry_run, force, org, &config).await,
+        Commands::List { details, org } => cmd_list(details, org, &config).await,
+        Commands::Daemon { daemon_command } => cmd_daemon(daemon_command, &config).await,
+        Commands::Doctor { component } => cmd_doctor(component, &config).await,
     }
 }
 
 /// Initialize logging based on verbosity level
 fn init_logging(verbose: bool) -> Result<()> {
     let filter = if verbose {
-        EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("debug"))
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"))
     } else {
-        EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("info"))
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
     };
 
     tracing_subscriber::registry()
@@ -235,12 +228,8 @@ async fn cmd_init(base_dir: String, skip_auth: bool, config: &Config) -> Result<
 /// Handle authentication commands
 async fn cmd_auth(auth_command: AuthCommands, config: &Config) -> Result<()> {
     match auth_command {
-        AuthCommands::Setup => {
-            auth_setup::setup_authentication().await
-        }
-        AuthCommands::Test => {
-            auth_setup::test_authentication(config).await
-        }
+        AuthCommands::Setup => auth_setup::setup_authentication().await,
+        AuthCommands::Test => auth_setup::test_authentication(config).await,
         AuthCommands::Status => {
             match GitHubClient::new(config).await {
                 Ok(client) => {
@@ -257,8 +246,12 @@ async fn cmd_auth(auth_command: AuthCommands, config: &Config) -> Result<()> {
 }
 
 /// Sync repositories according to configuration
-async fn cmd_sync(dry_run: bool, force: bool, org_filter: Option<String>, config: &Config) -> Result<()> {
-
+async fn cmd_sync(
+    dry_run: bool,
+    force: bool,
+    org_filter: Option<String>,
+    config: &Config,
+) -> Result<()> {
     info!("Starting repository synchronization...");
 
     if dry_run {
@@ -275,22 +268,34 @@ async fn cmd_sync(dry_run: bool, force: bool, org_filter: Option<String>, config
         let mut up_to_date = 0;
 
         for state in &repo_states {
-            match (state.exists, state.has_uncommitted_changes, state.is_ahead_of_remote, state.is_behind_remote) {
+            match (
+                state.exists,
+                state.has_uncommitted_changes,
+                state.is_ahead_of_remote,
+                state.is_behind_remote,
+            ) {
                 (false, _, _, _) => {
                     needs_clone += 1;
                     println!("   📥 Clone needed: {}", state.path.display());
                 }
                 (true, true, _, _) => {
                     has_conflicts += 1;
-                    println!("   ⚠️  Has conflicts: {} (uncommitted changes)", state.path.display());
+                    println!(
+                        "   ⚠️  Has conflicts: {} (uncommitted changes)",
+                        state.path.display()
+                    );
                 }
                 (true, false, _, true) => {
                     needs_pull += 1;
-                    println!("   🔄 Pull needed: {} (behind remote)", state.path.display());
+                    println!(
+                        "   🔄 Pull needed: {} (behind remote)",
+                        state.path.display()
+                    );
                 }
                 _ => {
                     up_to_date += 1;
-                    if repo_states.len() <= 10 {  // Show details for small sets
+                    if repo_states.len() <= 10 {
+                        // Show details for small sets
                         println!("   ✅ Up to date: {}", state.path.display());
                     }
                 }
@@ -322,7 +327,10 @@ async fn cmd_sync(dry_run: bool, force: bool, org_filter: Option<String>, config
 
     println!("\n🎉 Synchronization Complete!");
     println!("   📊 Total repositories: {}", summary.total_repositories);
-    println!("   ✅ Successful operations: {}", summary.successful_operations);
+    println!(
+        "   ✅ Successful operations: {}",
+        summary.successful_operations
+    );
     println!("   ❌ Failed operations: {}", summary.failed_operations);
     println!("   ⏭️  Skipped operations: {}", summary.skipped_operations);
     println!("   ⏱️  Duration: {:.2}s", summary.duration.as_secs_f64());
@@ -356,7 +364,8 @@ async fn cmd_list(details: bool, org_filter: Option<String>, config: &Config) ->
 
     // Filter by organization if specified
     let filtered_repos: Vec<_> = if let Some(org) = org_filter {
-        repositories.into_iter()
+        repositories
+            .into_iter()
             .filter(|repo| {
                 repo.full_name
                     .as_ref()
@@ -396,13 +405,12 @@ async fn cmd_list(details: bool, org_filter: Option<String>, config: &Config) ->
 
 /// Handle daemon commands
 async fn cmd_daemon(daemon_command: DaemonCommands, config: &Config) -> Result<()> {
-
     match daemon_command {
         DaemonCommands::Start { foreground } => {
             println!("🚀 Starting RepoSentry daemon...");
 
             // Check if daemon is already running
-            if is_daemon_running(&(*config))? {
+            if is_daemon_running(config)? {
                 println!("⚠️  Daemon is already running!");
                 println!("   Use 'reposentry daemon stop' to stop it first");
                 return Ok(());
@@ -435,7 +443,7 @@ async fn cmd_daemon(daemon_command: DaemonCommands, config: &Config) -> Result<(
         DaemonCommands::Stop => {
             println!("🛑 Stopping RepoSentry daemon...");
 
-            if !is_daemon_running(&(*config))? {
+            if !is_daemon_running(config)? {
                 println!("⚠️  No daemon appears to be running");
                 return Ok(());
             }
@@ -449,7 +457,7 @@ async fn cmd_daemon(daemon_command: DaemonCommands, config: &Config) -> Result<(
         DaemonCommands::Status => {
             println!("📊 RepoSentry Daemon Status");
 
-            let is_running = is_daemon_running(&(*config))?;
+            let is_running = is_daemon_running(config)?;
 
             if is_running {
                 let daemon = Daemon::new((*config).clone()).await?;
@@ -480,7 +488,7 @@ async fn cmd_daemon(daemon_command: DaemonCommands, config: &Config) -> Result<(
         DaemonCommands::Restart => {
             println!("🔄 Restarting RepoSentry daemon...");
 
-            if is_daemon_running(&(*config))? {
+            if is_daemon_running(config)? {
                 println!("🛑 Stopping current daemon...");
                 let daemon = Daemon::new((*config).clone()).await?;
                 daemon.stop().await?;
@@ -508,7 +516,7 @@ async fn cmd_daemon(daemon_command: DaemonCommands, config: &Config) -> Result<(
         DaemonCommands::Reload => {
             println!("🔄 Reloading daemon configuration...");
 
-            if !is_daemon_running(&(*config))? {
+            if !is_daemon_running(config)? {
                 println!("⚠️  No daemon appears to be running");
                 return Ok(());
             }
@@ -572,7 +580,8 @@ async fn cmd_doctor(_component: Option<DoctorComponent>, config: &Config) -> Res
     let ssh_dir = dirs::home_dir().unwrap_or_default().join(".ssh");
     if ssh_dir.exists() {
         let ssh_keys = ["id_rsa", "id_ed25519", "id_ecdsa"];
-        let found_keys: Vec<_> = ssh_keys.iter()
+        let found_keys: Vec<_> = ssh_keys
+            .iter()
             .filter(|key| ssh_dir.join(key).exists())
             .collect();
 

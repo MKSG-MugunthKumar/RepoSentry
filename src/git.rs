@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Context, Result};
-use std::path::{Path, PathBuf};
-use tracing::{debug, info, warn};
-use tokio::process::Command as AsyncCommand;
 use octocrab::models::Repository;
+use std::path::{Path, PathBuf};
+use tokio::process::Command as AsyncCommand;
+use tracing::{debug, info, warn};
 
 use crate::config::Config;
 
@@ -85,7 +85,8 @@ impl GitClient {
                     base_path = base_path.join(repo_name);
                     // Note: Suffix handling would need additional logic to detect conflicts
                 }
-                _ => { // "skip" and default
+                _ => {
+                    // "skip" and default
                     base_path = base_path.join(repo_name);
                 }
             }
@@ -115,7 +116,10 @@ impl GitClient {
         // Check if it's a git repository
         let git_dir = path.join(".git");
         if !git_dir.exists() {
-            return Err(anyhow!("Directory exists but is not a git repository: {}", path.display()));
+            return Err(anyhow!(
+                "Directory exists but is not a git repository: {}",
+                path.display()
+            ));
         }
 
         let has_uncommitted_changes = self.has_uncommitted_changes(path).await?;
@@ -150,7 +154,11 @@ impl GitClient {
         let target_path = self.get_repo_directory(repo)?;
         let full_name = repo.full_name.as_deref().unwrap_or(&repo.name);
 
-        info!("Cloning repository: {} -> {}", full_name, target_path.display());
+        info!(
+            "Cloning repository: {} -> {}",
+            full_name,
+            target_path.display()
+        );
 
         // Ensure parent directory exists
         if let Some(parent) = target_path.parent() {
@@ -175,7 +183,7 @@ impl GitClient {
 
         // Perform the clone operation
         let output = AsyncCommand::new("git")
-            .args(&["clone", clone_url])
+            .args(["clone", clone_url])
             .arg(&target_path)
             .output()
             .await
@@ -223,7 +231,11 @@ impl GitClient {
         }
 
         let full_name = repo.full_name.as_deref().unwrap_or(&repo.name);
-        info!("Syncing repository: {} at {}", full_name, target_path.display());
+        info!(
+            "Syncing repository: {} at {}",
+            full_name,
+            target_path.display()
+        );
 
         // Get clone URL for state analysis
         let clone_url = if let Some(clone_url) = &repo.clone_url {
@@ -245,7 +257,10 @@ impl GitClient {
             if !self.remote_urls_match(actual_remote, clone_url) {
                 return Ok(SyncResult::Skipped {
                     path: target_path,
-                    reason: format!("Remote URL mismatch: expected {}, found {}", clone_url, actual_remote),
+                    reason: format!(
+                        "Remote URL mismatch: expected {}, found {}",
+                        clone_url, actual_remote
+                    ),
                 });
             }
         }
@@ -256,7 +271,10 @@ impl GitClient {
             "fetch-only" => self.fetch_only_sync(&state).await,
             "interactive" => self.interactive_sync(&state).await,
             _ => {
-                warn!("Unknown sync strategy: {}, falling back to safe-pull", self.config.sync.strategy);
+                warn!(
+                    "Unknown sync strategy: {}, falling back to safe-pull",
+                    self.config.sync.strategy
+                );
                 self.safe_pull_sync(&state).await
             }
         }
@@ -327,7 +345,7 @@ impl GitClient {
 
     async fn has_uncommitted_changes(&self, path: &Path) -> Result<bool> {
         let output = AsyncCommand::new("git")
-            .args(&["status", "--porcelain"])
+            .args(["status", "--porcelain"])
             .current_dir(path)
             .output()
             .await
@@ -338,7 +356,7 @@ impl GitClient {
 
     async fn has_untracked_files(&self, path: &Path) -> Result<bool> {
         let output = AsyncCommand::new("git")
-            .args(&["ls-files", "--others", "--exclude-standard"])
+            .args(["ls-files", "--others", "--exclude-standard"])
             .current_dir(path)
             .output()
             .await
@@ -349,7 +367,7 @@ impl GitClient {
 
     async fn get_current_branch(&self, path: &Path) -> Result<Option<String>> {
         let output = AsyncCommand::new("git")
-            .args(&["branch", "--show-current"])
+            .args(["branch", "--show-current"])
             .current_dir(path)
             .output()
             .await
@@ -365,7 +383,7 @@ impl GitClient {
 
     async fn get_remote_url(&self, path: &Path) -> Result<Option<String>> {
         let output = AsyncCommand::new("git")
-            .args(&["remote", "get-url", "origin"])
+            .args(["remote", "get-url", "origin"])
             .current_dir(path)
             .output()
             .await
@@ -381,7 +399,7 @@ impl GitClient {
 
     async fn git_fetch(&self, path: &Path) -> Result<()> {
         let output = AsyncCommand::new("git")
-            .args(&["fetch", "origin"])
+            .args(["fetch", "origin"])
             .current_dir(path)
             .output()
             .await
@@ -397,7 +415,7 @@ impl GitClient {
 
     async fn is_ahead_of_remote(&self, path: &Path) -> Result<bool> {
         let output = AsyncCommand::new("git")
-            .args(&["rev-list", "--count", "origin/HEAD..HEAD"])
+            .args(["rev-list", "--count", "origin/HEAD..HEAD"])
             .current_dir(path)
             .output()
             .await
@@ -414,7 +432,7 @@ impl GitClient {
 
     async fn is_behind_remote(&self, path: &Path) -> Result<bool> {
         let output = AsyncCommand::new("git")
-            .args(&["rev-list", "--count", "HEAD..origin/HEAD"])
+            .args(["rev-list", "--count", "HEAD..origin/HEAD"])
             .current_dir(path)
             .output()
             .await
@@ -431,7 +449,7 @@ impl GitClient {
 
     async fn has_merge_conflicts(&self, path: &Path) -> Result<bool> {
         let output = AsyncCommand::new("git")
-            .args(&["diff", "--name-only", "--diff-filter=U"])
+            .args(["diff", "--name-only", "--diff-filter=U"])
             .current_dir(path)
             .output()
             .await
@@ -442,7 +460,7 @@ impl GitClient {
 
     async fn git_stash(&self, path: &Path) -> Result<()> {
         let output = AsyncCommand::new("git")
-            .args(&["stash", "push", "-m", "RepoSentry auto-stash"])
+            .args(["stash", "push", "-m", "RepoSentry auto-stash"])
             .current_dir(path)
             .output()
             .await
@@ -482,7 +500,11 @@ impl GitClient {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let commits_updated = self.parse_pull_output(&stdout);
 
-        info!("Successfully pulled {} commits in {}", commits_updated, path.display());
+        info!(
+            "Successfully pulled {} commits in {}",
+            commits_updated,
+            path.display()
+        );
         Ok(SyncResult::Pulled {
             path: path.to_path_buf(),
             commits_updated,
@@ -517,7 +539,7 @@ impl GitClient {
     async fn preserve_git_timestamps(&self, path: &Path) -> Result<()> {
         // Set file timestamps based on git commit history
         let output = AsyncCommand::new("git")
-            .args(&["log", "--format=%H %ct", "--name-only", "--reverse"])
+            .args(["log", "--format=%H %ct", "--name-only", "--reverse"])
             .current_dir(path)
             .output()
             .await
@@ -535,7 +557,7 @@ impl GitClient {
 
     async fn verify_repository_integrity(&self, path: &Path) -> Result<()> {
         let output = AsyncCommand::new("git")
-            .args(&["fsck", "--quick"])
+            .args(["fsck", "--quick"])
             .current_dir(path)
             .output()
             .await
@@ -588,7 +610,10 @@ mod tests {
         } else {
             base.join("Hello-World")
         };
-        assert_eq!(org_enabled_path, PathBuf::from("/tmp/repos/octocat/Hello-World"));
+        assert_eq!(
+            org_enabled_path,
+            PathBuf::from("/tmp/repos/octocat/Hello-World")
+        );
 
         // Test organization separation disabled with prefix
         let prefix_path = base.join("octocat-Hello-World");
@@ -614,7 +639,8 @@ mod tests {
             if url.starts_with("git@") {
                 url.split(':').nth(1).unwrap_or("").replace(".git", "")
             } else if url.starts_with("https://github.com/") {
-                url.replacen("https://github.com/", "", 1).replace(".git", "")
+                url.replacen("https://github.com/", "", 1)
+                    .replace(".git", "")
             } else {
                 url.to_string()
             }

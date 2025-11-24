@@ -17,13 +17,13 @@
 //! - [`github`]: GitHub API integration and authentication
 
 pub mod config;
-pub mod github;
-pub mod git;
-pub mod sync;
 pub mod daemon;
+pub mod git;
+pub mod github;
+pub mod sync;
 
 pub use config::Config;
-pub use github::GitHubClient;
-pub use git::{GitClient, SyncResult, RepoState};
-pub use sync::{SyncEngine, SyncSummary};
 pub use daemon::{Daemon, DaemonStatus};
+pub use git::{GitClient, RepoState, SyncResult};
+pub use github::GitHubClient;
+pub use sync::{SyncEngine, SyncSummary};

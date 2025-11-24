@@ -95,7 +95,7 @@ impl GitHubClient {
 
         // Check if user is authenticated
         let auth_status = Command::new("gh")
-            .args(&["auth", "status"])
+            .args(["auth", "status"])
             .output()
             .context("Failed to check GitHub CLI auth status")?;
 
@@ -107,7 +107,7 @@ impl GitHubClient {
 
         // Get the token
         let token_output = Command::new("gh")
-            .args(&["auth", "token"])
+            .args(["auth", "token"])
             .output()
             .context("Failed to get GitHub CLI token")?;
 
@@ -135,8 +135,8 @@ impl GitHubClient {
     fn try_environment_token() -> Result<String> {
         debug!("Attempting environment variable authentication");
 
-        let token = env::var("GITHUB_TOKEN")
-            .context("GITHUB_TOKEN environment variable not set")?;
+        let token =
+            env::var("GITHUB_TOKEN").context("GITHUB_TOKEN environment variable not set")?;
 
         if token.is_empty() {
             return Err(anyhow!("GITHUB_TOKEN is empty"));
@@ -190,7 +190,7 @@ impl GitHubClient {
             repositories.extend(items);
 
             // GitHub API pagination limit for u8
-            if page >= 255 {
+            if page == 255 {
                 warn!("Reached maximum pagination limit (255 pages)");
                 break;
             }
@@ -214,7 +214,11 @@ impl GitHubClient {
             .await
             .context("Failed to fetch user organizations")?;
 
-        let org_names: Vec<String> = orgs.items.into_iter().map(|org| org.organization.login).collect();
+        let org_names: Vec<String> = orgs
+            .items
+            .into_iter()
+            .map(|org| org.organization.login)
+            .collect();
 
         info!("Found {} organizations: {:?}", org_names.len(), org_names);
         Ok(org_names)
@@ -237,7 +241,10 @@ impl GitHubClient {
                 .send()
                 .await
                 .with_context(|| {
-                    format!("Failed to fetch repositories for organization {} page {}", org, page)
+                    format!(
+                        "Failed to fetch repositories for organization {} page {}",
+                        org, page
+                    )
                 })?;
 
             let items = page_repos.items;
@@ -248,8 +255,11 @@ impl GitHubClient {
             repositories.extend(items);
 
             // GitHub API pagination limit for u8
-            if page >= 255 {
-                warn!("Reached maximum pagination limit (255 pages) for org: {}", org);
+            if page == 255 {
+                warn!(
+                    "Reached maximum pagination limit (255 pages) for org: {}",
+                    org
+                );
                 break;
             }
             page += 1;
@@ -281,7 +291,10 @@ impl GitHubClient {
                         all_repositories.extend(org_repos);
                     }
                     Err(e) => {
-                        warn!("Failed to fetch repositories for organization {}: {}", org, e);
+                        warn!(
+                            "Failed to fetch repositories for organization {}: {}",
+                            org, e
+                        );
                         continue;
                     }
                 }
@@ -356,9 +369,7 @@ impl GitHubClient {
         patterns.iter().any(|pattern| {
             // Simple glob pattern matching
             if pattern.contains('*') {
-                let pattern_regex = pattern
-                    .replace('.', r"\.")
-                    .replace('*', ".*");
+                let pattern_regex = pattern.replace('.', r"\.").replace('*', ".*");
 
                 regex::Regex::new(&format!("^{}$", pattern_regex))
                     .map(|re| re.is_match(name))
@@ -384,7 +395,12 @@ pub mod auth_setup {
             println!("✅ GitHub CLI (gh) is installed");
 
             // Check if already authenticated
-            if Command::new("gh").args(&["auth", "status"]).output()?.status.success() {
+            if Command::new("gh")
+                .args(["auth", "status"])
+                .output()?
+                .status
+                .success()
+            {
                 println!("✅ GitHub CLI is already authenticated");
                 return Ok(());
             } else {
@@ -467,15 +483,18 @@ mod tests {
         match GitHubClient::detect_authentication(&config) {
             Ok((strategy, _token)) => {
                 // Either strategy is valid
-                assert!(matches!(strategy, AuthStrategy::GitHubCLI | AuthStrategy::EnvironmentToken));
+                assert!(matches!(
+                    strategy,
+                    AuthStrategy::GitHubCLI | AuthStrategy::EnvironmentToken
+                ));
             }
             Err(e) => {
                 // No authentication available - should give helpful error
                 let error_msg = e.to_string();
                 assert!(
-                    error_msg.contains("GitHub CLI") ||
-                    error_msg.contains("GITHUB_TOKEN") ||
-                    error_msg.contains("authentication")
+                    error_msg.contains("GitHub CLI")
+                        || error_msg.contains("GITHUB_TOKEN")
+                        || error_msg.contains("authentication")
                 );
             }
         }
@@ -495,15 +514,12 @@ mod tests {
 
     #[test]
     fn test_pattern_matching() {
-        let patterns = vec![
-            "test-*".to_string(),
-            "archived-*".to_string(),
-        ];
+        let patterns = vec!["test-*".to_string(), "archived-*".to_string()];
 
         let test_cases = vec![
-            ("test-repo", true),      // Should match test-*
+            ("test-repo", true),        // Should match test-*
             ("archived-project", true), // Should match archived-*
-            ("my-project", false),    // Should not match
+            ("my-project", false),      // Should not match
         ];
 
         // Test simple pattern matching logic
@@ -516,17 +532,18 @@ mod tests {
                     repo_name == pattern
                 }
             });
-            assert_eq!(matches, should_match, "Pattern matching failed for: {}", repo_name);
+            assert_eq!(
+                matches, should_match,
+                "Pattern matching failed for: {}",
+                repo_name
+            );
         }
     }
 
     #[test]
     fn test_size_conversion() {
         // Test basic size conversion logic
-        let test_cases = vec![
-            ("100MB", 100 * 1024 * 1024),
-            ("1GB", 1024 * 1024 * 1024),
-        ];
+        let test_cases = vec![("100MB", 100 * 1024 * 1024), ("1GB", 1024 * 1024 * 1024)];
 
         for (size_str, expected_bytes) in test_cases {
             let bytes = if size_str.ends_with("GB") {

@@ -182,12 +182,24 @@ pub struct AdvancedConfig {
 }
 
 // Default value functions
-fn default_auth_method() -> String { "auto".to_string() }
-fn default_true() -> bool { true }
-fn default_sync_strategy() -> String { "safe-pull".to_string() }
-fn default_max_parallel() -> usize { 4 }
-fn default_timeout() -> u64 { 300 }
-fn default_interval() -> String { "30m".to_string() }
+fn default_auth_method() -> String {
+    "auto".to_string()
+}
+fn default_true() -> bool {
+    true
+}
+fn default_sync_strategy() -> String {
+    "safe-pull".to_string()
+}
+fn default_max_parallel() -> usize {
+    4
+}
+fn default_timeout() -> u64 {
+    300
+}
+fn default_interval() -> String {
+    "30m".to_string()
+}
 fn default_pid_file() -> String {
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
         format!("{}/reposentry.pid", runtime_dir)
@@ -205,17 +217,29 @@ fn default_log_file() -> String {
         "/tmp/reposentry-daemon.log".to_string()
     }
 }
-fn default_log_level() -> String { "info".to_string() }
-fn default_log_format() -> String { "compact".to_string() }
-fn default_conflict_resolution() -> String { "prefix-org".to_string() }
-fn default_cache_duration() -> String { "1h".to_string() }
+fn default_log_level() -> String {
+    "info".to_string()
+}
+fn default_log_format() -> String {
+    "compact".to_string()
+}
+fn default_conflict_resolution() -> String {
+    "prefix-org".to_string()
+}
+fn default_cache_duration() -> String {
+    "1h".to_string()
+}
 
 // Default implementations
 impl Default for FilterConfig {
     fn default() -> Self {
         Self {
-            age: AgeFilter { max_age: Some("3month".to_string()) },
-            size: SizeFilter { max_size: Some("1GB".to_string()) },
+            age: AgeFilter {
+                max_age: Some("3month".to_string()),
+            },
+            size: SizeFilter {
+                max_size: Some("1GB".to_string()),
+            },
         }
     }
 }
@@ -331,8 +355,7 @@ impl Config {
 
     /// Save configuration to a file
     pub fn save(&self, path: &Path) -> Result<()> {
-        let content = serde_yaml::to_string(self)
-            .context("Failed to serialize configuration")?;
+        let content = serde_yaml::to_string(self).context("Failed to serialize configuration")?;
 
         std::fs::write(path, content)
             .with_context(|| format!("Failed to write config file: {:?}", path))?;
@@ -342,8 +365,7 @@ impl Config {
 
     /// Get the default configuration file path (XDG compliant)
     pub fn default_config_path() -> Result<PathBuf> {
-        let config_dir = config_dir()
-            .context("Failed to get user config directory")?;
+        let config_dir = config_dir().context("Failed to get user config directory")?;
 
         Ok(config_dir.join("reposentry").join("config.yml"))
     }
@@ -367,25 +389,29 @@ impl Config {
 
     /// Convert age filter string to chrono Duration for comparison
     pub fn age_filter_duration(&self) -> Option<Duration> {
-        self.filters.age.max_age.as_ref().and_then(|age_str| {
-            match age_str.as_str() {
+        self.filters
+            .age
+            .max_age
+            .as_ref()
+            .and_then(|age_str| match age_str.as_str() {
                 "1month" => Some(Duration::days(30)),
                 "3month" => Some(Duration::days(90)),
                 "6month" => Some(Duration::days(180)),
                 _ => None,
-            }
-        })
+            })
     }
 
     /// Convert size filter string to bytes for comparison
     pub fn size_filter_bytes(&self) -> Option<u64> {
-        self.filters.size.max_size.as_ref().and_then(|size_str| {
-            match size_str.as_str() {
+        self.filters
+            .size
+            .max_size
+            .as_ref()
+            .and_then(|size_str| match size_str.as_str() {
                 "100MB" => Some(100 * 1024 * 1024),
                 "1GB" => Some(1024 * 1024 * 1024),
                 _ => None,
-            }
-        })
+            })
     }
 
     /// Check if a repository should be filtered based on age

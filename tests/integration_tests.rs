@@ -1,4 +1,4 @@
-use assert_fs::{TempDir, fixture::PathChild};
+use assert_fs::{fixture::PathChild, TempDir};
 use std::process::Command;
 
 /// Integration tests for RepoSentry CLI commands
@@ -56,7 +56,14 @@ fn test_config_init_with_skip_auth() {
     let config_dir = temp_dir.child("reposentry");
 
     let output = Command::new("cargo")
-        .args(&["run", "--", "init", "--skip-auth", "--base-dir", "/tmp/test"])
+        .args(&[
+            "run",
+            "--",
+            "init",
+            "--skip-auth",
+            "--base-dir",
+            "/tmp/test",
+        ])
         .env("XDG_CONFIG_HOME", temp_dir.path())
         .output()
         .expect("Failed to execute command");
@@ -69,7 +76,9 @@ fn test_config_init_with_skip_auth() {
     } else {
         // If it fails, verify it's for expected reasons (authentication, etc.)
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains("authentication") || stderr.contains("config") || !stderr.is_empty());
+        assert!(
+            stderr.contains("authentication") || stderr.contains("config") || !stderr.is_empty()
+        );
     }
 }
 
@@ -86,10 +95,10 @@ fn test_auth_status() {
 
     // Should either show successful auth or clear error message
     assert!(
-        stdout.contains("successful") ||
-        stdout.contains("Authentication") ||
-        stderr.contains("authentication") ||
-        stderr.contains("GitHub")
+        stdout.contains("successful")
+            || stdout.contains("Authentication")
+            || stderr.contains("authentication")
+            || stderr.contains("GitHub")
     );
 }
 
@@ -121,7 +130,9 @@ fn test_invalid_command() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("error") || stderr.contains("unrecognized") || stderr.contains("invalid"));
+    assert!(
+        stderr.contains("error") || stderr.contains("unrecognized") || stderr.contains("invalid")
+    );
 }
 
 #[test]
@@ -164,10 +175,17 @@ base_directory: "/tmp/test"
 github:
   auth_method: "auto"
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     let output = Command::new("cargo")
-        .args(&["run", "--", "--config", config_path.path().to_str().unwrap(), "doctor"])
+        .args(&[
+            "run",
+            "--",
+            "--config",
+            config_path.path().to_str().unwrap(),
+            "doctor",
+        ])
         .output()
         .expect("Failed to execute command");
 
@@ -176,10 +194,10 @@ github:
         let stderr = String::from_utf8_lossy(&output.stderr);
         // Error should be about config content or authentication, not file parsing
         assert!(
-            stderr.contains("authentication") ||
-            stderr.contains("GitHub") ||
-            stderr.contains("config") ||
-            !stderr.is_empty()
+            stderr.contains("authentication")
+                || stderr.contains("GitHub")
+                || stderr.contains("config")
+                || !stderr.is_empty()
         );
     }
 }
@@ -190,13 +208,16 @@ fn test_error_handling_invalid_config() {
     let config_path = temp_dir.child("invalid-config.yml");
 
     // Create an invalid config file
-    std::fs::write(
-        config_path.path(),
-        "invalid: yaml: content: [",
-    ).unwrap();
+    std::fs::write(config_path.path(), "invalid: yaml: content: [").unwrap();
 
     let output = Command::new("cargo")
-        .args(&["run", "--", "--config", config_path.path().to_str().unwrap(), "doctor"])
+        .args(&[
+            "run",
+            "--",
+            "--config",
+            config_path.path().to_str().unwrap(),
+            "doctor",
+        ])
         .output()
         .expect("Failed to execute command");
 

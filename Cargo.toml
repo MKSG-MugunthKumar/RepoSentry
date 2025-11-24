@@ -2,7 +2,7 @@
 name = "reposentry"
 version = "0.1.0"
 edition = "2021"
-authors = ["MK <mksg@mk.sg>"]
+authors = ["MindKraft Studios Group <mksg@mk.sg>"]
 description = "Intelligent git repository synchronization daemon"
 license = "MIT"
 repository = "https://github.com/MKSG-MugunthKumar/RepoSentry"
@@ -99,8 +99,8 @@ unused_must_use = "warn"
 
 # Debian package configuration
 [package.metadata.deb]
-maintainer = "MK <mksg@mk.sg>"
-copyright = "2024, MK <mksg@mk.sg>"
+maintainer = "MindKraft Studios Group <mksg@mk.sg>"
+copyright = "2025, MindKraft Studios Group <mksg@mk.sg>"
 license-file = ["LICENSE", "4"]
 depends = "$auto, git"
 section = "utils"
