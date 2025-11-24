@@ -1,0 +1,112 @@
+# RepoSentry Configuration File
+# Location: ${XDG_CONFIG_HOME}/reposentry/config.yml (usually ~/.config/reposentry/config.yml)
+
+# Base directory for repository synchronization
+# Supports environment variable expansion
+base_directory: "${HOME}/dev"
+
+# Repository filtering configuration
+filters:
+  # Age-based filtering - only clone repositories with recent activity
+  age:
+    # Options: "1month", "3month", "6month", or null to disable age filtering
+    max_age: "3month"
+
+  # Size-based filtering - only clone repositories under specified size
+  size:
+    # Options: "100MB", "1GB", or null to disable size filtering
+    max_size: "1GB"
+
+# GitHub authentication and discovery settings
+github:
+  # Authentication method - automatically detected
+  # 1. Tries GitHub CLI first: `gh auth token`
+  # 2. Falls back to GITHUB_TOKEN environment variable
+  # 3. Prompts user if neither available
+  auth_method: "auto"  # "auto", "gh_cli", "token"
+
+  # GitHub user/organization settings
+  username: null  # Will be auto-detected from authenticated user
+
+  # Include organization repositories
+  include_organizations: true
+
+  # Repository exclusion patterns (glob patterns)
+  exclude_patterns:
+    - "archived-*"
+    - "test-*"
+    - "*.github.io"
+    - "fork-*"
+
+  # Include forked repositories
+  include_forks: false
+
+# Synchronization behavior
+sync:
+  # Sync strategy for existing repositories
+  # "safe-pull": Pull only if no conflicts detected
+  # "fetch-only": Always fetch, never pull
+  # "interactive": Prompt user for each conflict
+  strategy: "safe-pull"
+
+  # Maximum number of repositories to process in parallel
+  max_parallel: 4
+
+  # Timeout for individual git operations (in seconds)
+  timeout: 300
+
+  # Automatically stash uncommitted changes before pulling
+  auto_stash: false
+
+  # Only allow fast-forward pulls (no merge commits)
+  fast_forward_only: true
+
+# Daemon configuration
+daemon:
+  # Enable daemon mode
+  enabled: false
+
+  # Sync interval when running as daemon
+  interval: "30m"  # "5m", "15m", "30m", "1h", "2h", "daily"
+
+  # Daemon process settings
+  pid_file: "${XDG_RUNTIME_DIR}/reposentry.pid"
+  log_file: "${XDG_DATA_HOME}/reposentry/daemon.log"
+
+# Logging configuration
+logging:
+  # Log level: "error", "warn", "info", "debug", "trace"
+  level: "info"
+
+  # Log format: "compact", "pretty", "json"
+  format: "compact"
+
+  # Enable colored output (when supported)
+  color: true
+
+# Directory structure organization
+organization:
+  # Create separate directories for organizations
+  # true: ~/dev/organization-name/repository-name
+  # false: ~/dev/repository-name
+  separate_org_dirs: true
+
+  # Handle repository name conflicts
+  # "skip": Skip conflicting repositories
+  # "suffix": Add suffix like repo-name-2
+  # "prefix-org": Use org-name/repo-name format
+  conflict_resolution: "prefix-org"
+
+# Advanced settings
+advanced:
+  # Preserve git timestamps on cloned repositories
+  preserve_timestamps: true
+
+  # Verify repository integrity after clone
+  verify_clone: true
+
+  # Clean up failed clone attempts
+  cleanup_on_error: true
+
+  # Repository metadata caching (reduces API calls)
+  cache_duration: "1h"
