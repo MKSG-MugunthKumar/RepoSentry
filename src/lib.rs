@@ -19,7 +19,9 @@
 pub mod config;
 pub mod github;
 pub mod git;
+pub mod sync;
 
 pub use config::Config;
 pub use github::GitHubClient;
 pub use git::{GitClient, SyncResult, RepoState};
+pub use sync::{SyncEngine, SyncSummary};
