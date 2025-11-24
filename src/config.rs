@@ -188,8 +188,23 @@ fn default_sync_strategy() -> String { "safe-pull".to_string() }
 fn default_max_parallel() -> usize { 4 }
 fn default_timeout() -> u64 { 300 }
 fn default_interval() -> String { "30m".to_string() }
-fn default_pid_file() -> String { "${XDG_RUNTIME_DIR}/reposentry.pid".to_string() }
-fn default_log_file() -> String { "${XDG_DATA_HOME}/reposentry/daemon.log".to_string() }
+fn default_pid_file() -> String {
+    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        format!("{}/reposentry.pid", runtime_dir)
+    } else {
+        "/tmp/reposentry.pid".to_string()
+    }
+}
+
+fn default_log_file() -> String {
+    if let Ok(data_home) = std::env::var("XDG_DATA_HOME") {
+        format!("{}/reposentry/daemon.log", data_home)
+    } else if let Ok(home) = std::env::var("HOME") {
+        format!("{}/.local/share/reposentry/daemon.log", home)
+    } else {
+        "/tmp/reposentry-daemon.log".to_string()
+    }
+}
 fn default_log_level() -> String { "info".to_string() }
 fn default_log_format() -> String { "compact".to_string() }
 fn default_conflict_resolution() -> String { "prefix-org".to_string() }
