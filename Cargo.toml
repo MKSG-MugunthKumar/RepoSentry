@@ -1,0 +1,105 @@
+[package]
+name = "reposentry"
+version = "0.1.0"
+edition = "2021"
+authors = ["MK <mksg@mk.sg>"]
+description = "Intelligent git repository synchronization daemon"
+license = "MIT"
+repository = "https://github.com/MKSG-MugunthKumar/RepoSentry"
+
+[package.metadata.bundle]
+identifier = "sg.mk.reposentry"
+category = "Developer Tools"
+
+[[bin]]
+name = "reposentry"
+path = "src/main.rs"
+
+[dependencies]
+# CLI argument parsing
+clap = { version = "4.4", features = ["derive"] }
+
+# Configuration and serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+
+# Error handling
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# System directories (XDG compliance)
+dirs = "5.0"
+
+# Async runtime
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "process", "time"] }
+
+# GitHub API client
+octocrab = "0.38"
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json"] }
+
+# Path manipulation
+path-clean = "1.0"
+shellexpand = "3.1"
+
+# Date/time handling for repository age filtering
+chrono = { version = "0.4", features = ["serde"] }
+
+# Process daemonization
+daemonize = "0.5"
+
+# Parallel processing
+futures = "0.3"
+futures-util = "0.3"
+
+[dev-dependencies]
+tempfile = "3.8"
+
+[workspace.lints.clippy]
+too_many_arguments = "allow"
+missing_errors_doc = "allow"
+
+[workspace.lints.rust]
+unused_must_use = "warn"
+
+# Debian package configuration
+[package.metadata.deb]
+maintainer = "MK <mksg@mk.sg>"
+copyright = "2024, MK <mksg@mk.sg>"
+license-file = ["LICENSE", "4"]
+depends = "$auto, git"
+section = "utils"
+priority = "optional"
+description = """
+Intelligent git repository synchronization daemon.
+RepoSentry automatically keeps local repository collections in sync with
+remote origins while intelligently preventing data loss from careless
+automated pulls. Supports GitHub API integration, organization repositories,
+and configurable filtering by repository age and size.
+"""
+assets = [
+  ["target/release/reposentry", "usr/bin/", "755"],
+  ["config.example.yml", "usr/share/doc/reposentry/", "644"],
+  ["README.md", "usr/share/doc/reposentry/", "644"],
+]
+maintainer-scripts = "debian/"
+systemd-units = { enable = false }
+
+# RPM package configuration
+[package.metadata.rpm]
+package = "reposentry"
+version = "0.1.0"
+summary = "Intelligent git repository synchronization daemon"
+description = """
+RepoSentry automatically keeps local repository collections in sync with
+remote origins while intelligently preventing data loss from careless
+automated pulls. Supports GitHub API integration, organization repositories,
+and configurable filtering by repository age and size.
+"""
+license = "MIT"
+group = "Applications/System"
+requires = { git = "*" }
