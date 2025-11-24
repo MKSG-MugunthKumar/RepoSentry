@@ -68,6 +68,10 @@ futures-util = "0.3"
 # Pattern matching for repository exclusions
 regex = "1.10"
 
+# Terminal User Interface
+ratatui = "0.25"
+crossterm = "0.27"
+
 [dev-dependencies]
 # Existing test dependency
 tempfile = "3.8"

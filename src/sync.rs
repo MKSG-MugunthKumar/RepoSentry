@@ -14,7 +14,7 @@ use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
 /// Results from a complete sync operation
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SyncSummary {
     pub total_repositories: usize,
     pub successful_operations: usize,
@@ -25,6 +25,7 @@ pub struct SyncSummary {
 }
 
 /// The main sync engine that orchestrates repository synchronization
+#[derive(Clone)]
 pub struct SyncEngine {
     config: Arc<Config>,
     github_client: GitHubClient,

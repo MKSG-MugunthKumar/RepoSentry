@@ -8,6 +8,7 @@ use tracing::{debug, info, warn};
 use crate::config::Config;
 
 /// GitHub client wrapper with authentication management
+#[derive(Clone)]
 pub struct GitHubClient {
     client: Octocrab,
     username: String,

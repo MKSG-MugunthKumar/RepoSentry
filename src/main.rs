@@ -5,6 +5,7 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use reposentry::daemon::is_daemon_running;
 use reposentry::github::auth_setup;
+use reposentry::tui;
 use reposentry::{Config, Daemon, GitHubClient, SyncEngine};
 
 #[derive(Parser)]
@@ -81,6 +82,9 @@ enum Commands {
         #[arg(value_enum)]
         component: Option<DoctorComponent>,
     },
+
+    /// Launch interactive Terminal User Interface
+    Tui,
 }
 
 #[derive(Subcommand)]
@@ -162,6 +166,7 @@ async fn main() -> Result<()> {
         Commands::List { details, org } => cmd_list(details, org, &config).await,
         Commands::Daemon { daemon_command } => cmd_daemon(daemon_command, &config).await,
         Commands::Doctor { component } => cmd_doctor(component, &config).await,
+        Commands::Tui => cmd_tui(&config).await,
     }
 }
 
@@ -597,6 +602,19 @@ async fn cmd_doctor(_component: Option<DoctorComponent>, config: &Config) -> Res
 
     println!();
     println!("✅ Diagnostics complete");
+
+    Ok(())
+}
+
+/// Launch the Terminal User Interface
+async fn cmd_tui(config: &Config) -> Result<()> {
+    info!("Launching TUI interface");
+
+    // Clone config for TUI ownership
+    let config = config.clone();
+
+    // Run the TUI
+    tui::run_tui(config).await?;
 
     Ok(())
 }

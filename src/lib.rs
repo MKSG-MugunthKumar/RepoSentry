@@ -21,6 +21,7 @@ pub mod daemon;
 pub mod git;
 pub mod github;
 pub mod sync;
+pub mod tui;
 
 pub use config::Config;
 pub use daemon::{Daemon, DaemonStatus};
