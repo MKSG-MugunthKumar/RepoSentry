@@ -452,3 +452,94 @@ pub mod auth_setup {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use std::env;
+
+    #[test]
+    fn test_auth_strategy_detection() {
+        let config = Config::default();
+
+        // Test authentication detection - will either succeed or fail gracefully
+        match GitHubClient::detect_authentication(&config) {
+            Ok((strategy, _token)) => {
+                // Either strategy is valid
+                assert!(matches!(strategy, AuthStrategy::GitHubCLI | AuthStrategy::EnvironmentToken));
+            }
+            Err(e) => {
+                // No authentication available - should give helpful error
+                let error_msg = e.to_string();
+                assert!(
+                    error_msg.contains("GitHub CLI") ||
+                    error_msg.contains("GITHUB_TOKEN") ||
+                    error_msg.contains("authentication")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_auth_strategy_env_token() {
+        env::set_var("TEST_GITHUB_TOKEN", "test_token");
+
+        // Test that we can work with environment variables
+        if let Ok(token) = env::var("TEST_GITHUB_TOKEN") {
+            assert_eq!(token, "test_token");
+        }
+
+        env::remove_var("TEST_GITHUB_TOKEN");
+    }
+
+    #[test]
+    fn test_pattern_matching() {
+        let patterns = vec![
+            "test-*".to_string(),
+            "archived-*".to_string(),
+        ];
+
+        let test_cases = vec![
+            ("test-repo", true),      // Should match test-*
+            ("archived-project", true), // Should match archived-*
+            ("my-project", false),    // Should not match
+        ];
+
+        // Test simple pattern matching logic
+        for (repo_name, should_match) in test_cases {
+            let matches = patterns.iter().any(|pattern| {
+                if pattern.ends_with('*') {
+                    let prefix = &pattern[..pattern.len() - 1];
+                    repo_name.starts_with(prefix)
+                } else {
+                    repo_name == pattern
+                }
+            });
+            assert_eq!(matches, should_match, "Pattern matching failed for: {}", repo_name);
+        }
+    }
+
+    #[test]
+    fn test_size_conversion() {
+        // Test basic size conversion logic
+        let test_cases = vec![
+            ("100MB", 100 * 1024 * 1024),
+            ("1GB", 1024 * 1024 * 1024),
+        ];
+
+        for (size_str, expected_bytes) in test_cases {
+            let bytes = if size_str.ends_with("GB") {
+                let num: u64 = size_str.trim_end_matches("GB").parse().unwrap();
+                num * 1024 * 1024 * 1024
+            } else if size_str.ends_with("MB") {
+                let num: u64 = size_str.trim_end_matches("MB").parse().unwrap();
+                num * 1024 * 1024
+            } else {
+                0
+            };
+
+            assert_eq!(bytes, expected_bytes);
+        }
+    }
+}

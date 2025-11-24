@@ -422,3 +422,43 @@ impl Default for Config {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    use tempfile::TempDir;
+
+    // Helper function to create a temporary config directory
+    fn setup_test_config_dir() -> (TempDir, PathBuf) {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config_dir = temp_dir.path().join("reposentry");
+        std::fs::create_dir_all(&config_dir).expect("Failed to create config dir");
+        (temp_dir, config_dir)
+    }
+
+    #[test]
+    fn test_config_default_values() {
+        let config = Config::default();
+
+        assert_eq!(config.base_directory, "${HOME}/dev");
+        assert!(config.github.include_organizations);
+        assert!(!config.github.include_forks);
+        assert_eq!(config.sync.max_parallel, 4);
+        assert_eq!(config.sync.timeout, 300);
+        assert!(!config.sync.auto_stash);
+        assert!(config.sync.fast_forward_only);
+        assert!(!config.daemon.enabled);
+        assert!(config.organization.separate_org_dirs);
+        assert!(config.advanced.preserve_timestamps);
+    }
+
+    #[test]
+    fn test_core_functionality() {
+        // Simple test to verify the core config functionality works
+        let config = Config::default();
+        assert!(config.base_directory.contains("dev"));
+        assert!(config.github.include_organizations);
+        assert!(!config.github.include_forks);
+    }
+}

@@ -11,6 +11,12 @@ repository = "https://github.com/MKSG-MugunthKumar/RepoSentry"
 identifier = "sg.mk.reposentry"
 category = "Developer Tools"
 
+# Library target for unit tests
+[lib]
+name = "reposentry"
+path = "src/lib.rs"
+
+# Binary target
 [[bin]]
 name = "reposentry"
 path = "src/main.rs"
@@ -34,7 +40,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "5.0"
 
 # Async runtime
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "process", "time"] }
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "process", "time", "fs"] }
 
 # GitHub API client
 octocrab = "0.48"
@@ -60,7 +66,26 @@ futures-util = "0.3"
 regex = "1.10"
 
 [dev-dependencies]
+# Existing test dependency
 tempfile = "3.8"
+
+# Testing framework and utilities
+tokio-test = "0.4"
+serial_test = "3.0"  # For tests that can't run in parallel
+
+# Mock and test utilities
+mockall = "0.12"  # For mocking traits and structs
+wiremock = "0.5"  # For HTTP mocking
+assert_matches = "1.5"  # For pattern matching in tests
+
+# Test data generation
+fake = { version = "2.9", features = ["derive", "chrono"] }
+quickcheck = "1.0"  # Property-based testing
+quickcheck_macros = "1.0"
+
+# File system testing
+assert_fs = "1.0"  # For file system assertions
+predicates = "3.0"  # For complex assertions
 
 [workspace.lints.clippy]
 too_many_arguments = "allow"
