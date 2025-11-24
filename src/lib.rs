@@ -20,8 +20,10 @@ pub mod config;
 pub mod github;
 pub mod git;
 pub mod sync;
+pub mod daemon;
 
 pub use config::Config;
 pub use github::GitHubClient;
 pub use git::{GitClient, SyncResult, RepoState};
 pub use sync::{SyncEngine, SyncSummary};
+pub use daemon::{Daemon, DaemonStatus};
