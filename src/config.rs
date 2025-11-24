@@ -53,14 +53,14 @@ pub struct FilterConfig {
 }
 
 /// Age-based repository filtering
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct AgeFilter {
     /// Maximum age for repositories to be cloned
     pub max_age: Option<String>, // "1month", "3month", "6month"
 }
 
 /// Size-based repository filtering
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct SizeFilter {
     /// Maximum size for repositories to be cloned
     pub max_size: Option<String>, // "100MB", "1GB"
