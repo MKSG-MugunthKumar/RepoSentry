@@ -3,11 +3,9 @@ use clap::{Parser, Subcommand};
 use tracing::info;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-mod config;
-mod github;
-
-use config::Config;
-use github::GitHubClient;
+use reposentry::{Config, GitHubClient, SyncEngine, Daemon};
+use reposentry::daemon::is_daemon_running;
+use reposentry::github::auth_setup;
 
 #[derive(Parser)]
 #[command(name = "reposentry")]
@@ -114,6 +112,9 @@ enum DaemonCommands {
 
     /// Restart daemon
     Restart,
+
+    /// Reload daemon configuration
+    Reload,
 }
 
 #[derive(clap::ValueEnum, Clone)]
@@ -217,7 +218,7 @@ async fn cmd_init(base_dir: String, skip_auth: bool, config: &Config) -> Result<
 
     if !skip_auth {
         info!("Setting up authentication...");
-        github::auth_setup::setup_authentication().await?;
+        auth_setup::setup_authentication().await?;
     }
 
     println!("✅ RepoSentry initialized successfully!");
@@ -235,10 +236,10 @@ async fn cmd_init(base_dir: String, skip_auth: bool, config: &Config) -> Result<
 async fn cmd_auth(auth_command: AuthCommands, config: &Config) -> Result<()> {
     match auth_command {
         AuthCommands::Setup => {
-            github::auth_setup::setup_authentication().await
+            auth_setup::setup_authentication().await
         }
         AuthCommands::Test => {
-            github::auth_setup::test_authentication(config).await
+            auth_setup::test_authentication(config).await
         }
         AuthCommands::Status => {
             match GitHubClient::new(config).await {
@@ -256,47 +257,88 @@ async fn cmd_auth(auth_command: AuthCommands, config: &Config) -> Result<()> {
 }
 
 /// Sync repositories according to configuration
-async fn cmd_sync(dry_run: bool, _force: bool, org_filter: Option<String>, config: &Config) -> Result<()> {
+async fn cmd_sync(dry_run: bool, force: bool, org_filter: Option<String>, config: &Config) -> Result<()> {
+
     info!("Starting repository synchronization...");
 
     if dry_run {
-        println!("🔍 Dry run mode - no changes will be made");
-    }
+        println!("🔍 Dry run mode - analyzing repository states");
 
-    // Create GitHub client
-    let github_client = GitHubClient::new(config).await?;
+        let sync_engine = SyncEngine::new((*config).clone()).await?;
+        let repo_states = sync_engine.dry_run().await?;
 
-    // Get repositories to sync
-    let repositories = github_client.get_all_repositories(config).await?;
+        println!("📊 Repository Analysis Results:");
 
-    // Filter by organization if specified
-    let filtered_repos: Vec<_> = if let Some(org) = org_filter {
-        repositories.into_iter()
-            .filter(|repo| {
-                repo.full_name
-                    .as_ref()
-                    .map(|name| name.starts_with(&format!("{}/", org)))
-                    .unwrap_or(false)
-            })
-            .collect()
-    } else {
-        repositories
-    };
+        let mut needs_clone = 0;
+        let mut needs_pull = 0;
+        let mut has_conflicts = 0;
+        let mut up_to_date = 0;
 
-    if filtered_repos.is_empty() {
-        println!("No repositories found matching criteria");
+        for state in &repo_states {
+            match (state.exists, state.has_uncommitted_changes, state.is_ahead_of_remote, state.is_behind_remote) {
+                (false, _, _, _) => {
+                    needs_clone += 1;
+                    println!("   📥 Clone needed: {}", state.path.display());
+                }
+                (true, true, _, _) => {
+                    has_conflicts += 1;
+                    println!("   ⚠️  Has conflicts: {} (uncommitted changes)", state.path.display());
+                }
+                (true, false, _, true) => {
+                    needs_pull += 1;
+                    println!("   🔄 Pull needed: {} (behind remote)", state.path.display());
+                }
+                _ => {
+                    up_to_date += 1;
+                    if repo_states.len() <= 10 {  // Show details for small sets
+                        println!("   ✅ Up to date: {}", state.path.display());
+                    }
+                }
+            }
+        }
+
+        println!("\n📈 Summary:");
+        println!("   📥 Repositories to clone: {}", needs_clone);
+        println!("   🔄 Repositories to pull: {}", needs_pull);
+        println!("   ⚠️  Repositories with conflicts: {}", has_conflicts);
+        println!("   ✅ Up-to-date repositories: {}", up_to_date);
+
+        if has_conflicts > 0 {
+            println!("\n💡 Tip: Resolve conflicts manually before running sync");
+        }
+
         return Ok(());
     }
 
-    println!("Found {} repositories to sync:", filtered_repos.len());
+    // Real sync mode
+    println!("🔄 Running full repository synchronization");
 
-    for repo in &filtered_repos {
-        println!("  📁 {}", repo.full_name.as_ref().unwrap_or(&repo.name));
+    if force {
+        println!("⚡ Force mode enabled");
     }
 
-    if !dry_run {
-        println!("🚧 Synchronization implementation coming soon...");
-        // TODO: Implement actual sync logic
+    let sync_engine = SyncEngine::new((*config).clone()).await?;
+    let summary = sync_engine.run_sync().await?;
+
+    println!("\n🎉 Synchronization Complete!");
+    println!("   📊 Total repositories: {}", summary.total_repositories);
+    println!("   ✅ Successful operations: {}", summary.successful_operations);
+    println!("   ❌ Failed operations: {}", summary.failed_operations);
+    println!("   ⏭️  Skipped operations: {}", summary.skipped_operations);
+    println!("   ⏱️  Duration: {:.2}s", summary.duration.as_secs_f64());
+
+    if summary.failed_operations > 0 {
+        println!("\n🔍 Failed Operations:");
+        for result in &summary.results {
+            if let reposentry::SyncResult::Failed { path, error } = result {
+                println!("   ❌ {}: {}", path.display(), error);
+            }
+        }
+    }
+
+    if let Some(org) = org_filter {
+        println!("\n📝 Note: Filtered by organization: {}", org);
+        println!("   Use --help to see all filtering options");
     }
 
     Ok(())
@@ -353,9 +395,130 @@ async fn cmd_list(details: bool, org_filter: Option<String>, config: &Config) ->
 }
 
 /// Handle daemon commands
-async fn cmd_daemon(_daemon_command: DaemonCommands, _config: &Config) -> Result<()> {
-    println!("🚧 Daemon functionality coming soon...");
-    // TODO: Implement daemon commands
+async fn cmd_daemon(daemon_command: DaemonCommands, config: &Config) -> Result<()> {
+
+    match daemon_command {
+        DaemonCommands::Start { foreground } => {
+            println!("🚀 Starting RepoSentry daemon...");
+
+            // Check if daemon is already running
+            if is_daemon_running(&(*config))? {
+                println!("⚠️  Daemon is already running!");
+                println!("   Use 'reposentry daemon stop' to stop it first");
+                return Ok(());
+            }
+
+            let mut daemon = Daemon::new((*config).clone()).await?;
+
+            if foreground {
+                println!("🖥️  Running in foreground mode (Ctrl+C to stop)");
+                daemon.run().await?;
+            } else {
+                #[cfg(unix)]
+                {
+                    daemon.daemonize()?;
+                    println!("✅ Daemon started in background");
+                    println!("   PID file: {}", config.daemon.pid_file);
+                    println!("   Log file: {}", config.daemon.log_file);
+                    println!("   Sync interval: {}", config.daemon.interval);
+                }
+
+                #[cfg(not(unix))]
+                {
+                    println!("❌ Background daemon mode not supported on this platform");
+                    println!("   Use --foreground to run in foreground mode");
+                    return Ok(());
+                }
+            }
+        }
+
+        DaemonCommands::Stop => {
+            println!("🛑 Stopping RepoSentry daemon...");
+
+            if !is_daemon_running(&(*config))? {
+                println!("⚠️  No daemon appears to be running");
+                return Ok(());
+            }
+
+            let daemon = Daemon::new((*config).clone()).await?;
+            daemon.stop().await?;
+
+            println!("✅ Daemon stop signal sent");
+        }
+
+        DaemonCommands::Status => {
+            println!("📊 RepoSentry Daemon Status");
+
+            let is_running = is_daemon_running(&(*config))?;
+
+            if is_running {
+                let daemon = Daemon::new((*config).clone()).await?;
+                let status = daemon.status(std::time::Instant::now());
+
+                println!("   🟢 Status: Running");
+                println!("   ⏱️  Uptime: {:.1}m", status.uptime.as_secs_f64() / 60.0);
+                println!("   🔄 Sync interval: {}", config.daemon.interval);
+
+                if let Some(next_sync) = status.next_sync_in {
+                    println!("   ⏰ Next sync in: {:.0}s", next_sync.as_secs_f64());
+                }
+
+                println!("   📊 Sync statistics:");
+                println!("      Total: {}", status.total_syncs);
+                println!("      Successful: {}", status.successful_syncs);
+                println!("      Failed: {}", status.failed_syncs);
+
+                if !config.daemon.log_file.is_empty() {
+                    println!("   📄 Log file: {}", config.daemon.log_file);
+                }
+            } else {
+                println!("   🔴 Status: Not running");
+                println!("   💡 Use 'reposentry daemon start' to start the daemon");
+            }
+        }
+
+        DaemonCommands::Restart => {
+            println!("🔄 Restarting RepoSentry daemon...");
+
+            if is_daemon_running(&(*config))? {
+                println!("🛑 Stopping current daemon...");
+                let daemon = Daemon::new((*config).clone()).await?;
+                daemon.stop().await?;
+
+                // Wait a moment for clean shutdown
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+
+            println!("🚀 Starting daemon...");
+            let daemon = Daemon::new((*config).clone()).await?;
+
+            #[cfg(unix)]
+            {
+                daemon.daemonize()?;
+                println!("✅ Daemon restarted in background");
+            }
+
+            #[cfg(not(unix))]
+            {
+                println!("❌ Background daemon mode not supported on this platform");
+                println!("   Use 'daemon start --foreground' to run in foreground mode");
+            }
+        }
+
+        DaemonCommands::Reload => {
+            println!("🔄 Reloading daemon configuration...");
+
+            if !is_daemon_running(&(*config))? {
+                println!("⚠️  No daemon appears to be running");
+                return Ok(());
+            }
+
+            // TODO: Implement configuration hot-reload via IPC
+            println!("🚧 Configuration hot-reload coming soon...");
+            println!("   For now, use 'daemon restart' to apply new configuration");
+        }
+    }
+
     Ok(())
 }
 

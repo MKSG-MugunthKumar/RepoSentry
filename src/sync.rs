@@ -4,7 +4,8 @@
 //! repository discovery, filtering, and parallel synchronization using the
 //! GitClient for actual git operations.
 
-use crate::{Config, GitClient, GitHubClient, SyncResult, RepoState};
+use crate::{Config, GitHubClient};
+use crate::git::{GitClient, SyncResult, RepoState};
 use anyhow::{Result, Context};
 use futures::stream::{FuturesUnordered, StreamExt};
 use std::sync::Arc;

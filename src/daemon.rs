@@ -4,7 +4,8 @@
 //! in the background with configurable sync intervals, PID file management,
 //! and graceful shutdown handling.
 
-use crate::{Config, SyncEngine, SyncSummary};
+use crate::Config;
+use crate::sync::{SyncEngine, SyncSummary};
 use anyhow::{Result, Context};
 // Helper function to parse duration strings like "30m", "1h", etc.
 fn parse_daemon_duration(duration_str: &str) -> Result<u64> {
@@ -349,7 +350,7 @@ pub fn is_daemon_running(config: &Config) -> Result<bool> {
             // Check if process is actually running
             #[cfg(unix)]
             {
-                use nix::sys::signal::{self, Signal};
+                use nix::sys::signal;
                 use nix::unistd::Pid;
                 use nix::errno::Errno;
 

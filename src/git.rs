@@ -7,6 +7,7 @@ use octocrab::models::Repository;
 use crate::config::Config;
 
 /// Git operations handler with intelligent conflict detection and safe synchronization
+#[derive(Clone)]
 pub struct GitClient {
     config: Config,
 }
@@ -26,7 +27,7 @@ pub struct RepoState {
 }
 
 /// Result of a sync operation
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SyncResult {
     /// Repository was successfully cloned
     Cloned { path: PathBuf },
@@ -34,6 +35,8 @@ pub enum SyncResult {
     Pulled { path: PathBuf, commits_updated: u32 },
     /// Repository was fetched but not pulled due to conflicts
     FetchedOnly { path: PathBuf, reason: String },
+    /// Repository was already up to date
+    UpToDate { path: PathBuf },
     /// Repository was skipped due to configuration or errors
     Skipped { path: PathBuf, reason: String },
     /// Operation failed with error
