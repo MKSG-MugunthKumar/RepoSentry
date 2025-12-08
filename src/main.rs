@@ -552,14 +552,19 @@ async fn cmd_doctor(_component: Option<DoctorComponent>, config: &Config) -> Res
 /// Launch the Terminal User Interface
 async fn cmd_tui(config: &Config) -> Result<()> {
     // Preflight checks - ensure system is properly configured
+    println!("🔍 Running preflight checks...");
     let health = HealthCheck::run(config).await;
 
     if !health.all_passed() {
+        println!();
         print_health_report(&health);
         println!();
         println!("❌ Cannot start TUI - fix the errors above first");
         std::process::exit(1);
     }
+
+    // Show all checks passed
+    println!("✅ All checks passed");
 
     // Show warnings but continue
     let warnings = health.warnings();
@@ -570,8 +575,10 @@ async fn cmd_tui(config: &Config) -> Result<()> {
                 println!("   {}", details);
             }
         }
-        println!();
     }
+
+    println!("🚀 Starting TUI...");
+    println!();
 
     // Clone config for TUI ownership
     let config = config.clone();

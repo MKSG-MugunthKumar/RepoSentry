@@ -368,52 +368,81 @@ impl App {
         Ok(())
     }
 
-    /// Start a sync operation
+    /// Start a sync operation (runs in background)
     async fn start_sync(&mut self) -> Result<()> {
         if self.repo_specs.is_empty() {
             self.show_error = Some("No repositories to sync. Check authentication.".to_string());
             return Ok(());
         }
 
+        // Prevent starting multiple syncs
+        if self.show_progress {
+            self.add_log("Sync already in progress...".to_string());
+            return Ok(());
+        }
+
         self.add_log("Starting repository synchronization...".to_string());
         self.current_operation = Some("Synchronizing repositories".to_string());
         self.show_progress = true;
+        self.status_message = "Syncing...".to_string();
 
-        // Run sync using discovered repo specs
+        // Get a sender to communicate back to the UI
+        let sender = self.event_handler.sender();
         let specs_to_sync = self.repo_specs.clone();
-        match self.sync_engine.sync_repos(specs_to_sync).await {
-            Ok(summary) => {
-                self.last_sync = Some(Instant::now());
+        let sync_engine = self.sync_engine.clone();
 
-                // Log each sync result
-                for result in &summary.results {
-                    let msg = self.format_sync_result(result);
-                    self.add_log(msg);
+        // Spawn sync operation in background
+        tokio::spawn(async move {
+            let _ = sender.send(AppEvent::StatusUpdate("Discovering repository states...".to_string()));
+
+            match sync_engine.sync_repos(specs_to_sync).await {
+                Ok(summary) => {
+                    // Send individual results as status updates
+                    for result in &summary.results {
+                        let msg = match result {
+                            SyncResult::Cloned { path } => {
+                                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                                format!("✓ Cloned: {}", name)
+                            }
+                            SyncResult::Pulled { path, commits_updated } => {
+                                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                                format!("✓ Pulled: {} ({} commits)", name, commits_updated)
+                            }
+                            SyncResult::FetchedOnly { path, reason } => {
+                                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                                format!("⚠ Fetched only: {} ({})", name, reason)
+                            }
+                            SyncResult::UpToDate { path } => {
+                                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                                format!("• Up to date: {}", name)
+                            }
+                            SyncResult::Skipped { path, reason } => {
+                                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                                format!("⏭ Skipped: {} ({})", name, reason)
+                            }
+                            SyncResult::Failed { path, error } => {
+                                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                                format!("✗ Failed: {} ({})", name, error)
+                            }
+                        };
+                        let _ = sender.send(AppEvent::StatusUpdate(msg));
+                    }
+
+                    // Send completion summary
+                    let _ = sender.send(AppEvent::StatusUpdate(format!(
+                        "Sync completed: {} successful, {} failed, {} skipped ({:.1}s)",
+                        summary.successful_operations,
+                        summary.failed_operations,
+                        summary.skipped_operations,
+                        summary.duration.as_secs_f64()
+                    )));
+                    let _ = sender.send(AppEvent::SyncCompleted(summary));
                 }
-
-                self.add_log(format!(
-                    "Sync completed: {} successful, {} failed, {} skipped ({:.1}s)",
-                    summary.successful_operations,
-                    summary.failed_operations,
-                    summary.skipped_operations,
-                    summary.duration.as_secs_f64()
-                ));
-                self.last_sync_summary = Some(summary);
-                self.status_message = "Sync completed".to_string();
-
-                // Refresh repository states after sync
-                if let Ok(states) = self.sync_engine.analyze_repos(&self.repo_specs).await {
-                    self.repositories = states;
+                Err(e) => {
+                    let _ = sender.send(AppEvent::SyncFailed(format!("Sync failed: {}", e)));
                 }
             }
-            Err(e) => {
-                self.add_log(format!("ERROR: Sync failed: {}", e));
-                self.show_error = Some(format!("Sync failed: {}", e));
-            }
-        }
-
-        self.current_operation = None;
-        self.show_progress = false;
+        });
 
         Ok(())
     }
@@ -431,36 +460,6 @@ impl App {
         }
 
         Ok(())
-    }
-
-    /// Format a sync result for display in the log
-    fn format_sync_result(&self, result: &SyncResult) -> String {
-        match result {
-            SyncResult::Cloned { path } => {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-                format!("✓ Cloned: {}", name)
-            }
-            SyncResult::Pulled { path, commits_updated } => {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-                format!("✓ Pulled: {} ({} commits)", name, commits_updated)
-            }
-            SyncResult::FetchedOnly { path, reason } => {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-                format!("⚠ Fetched only: {} ({})", name, reason)
-            }
-            SyncResult::UpToDate { path } => {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-                format!("· Up to date: {}", name)
-            }
-            SyncResult::Skipped { path, reason } => {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-                format!("⊘ Skipped: {} ({})", name, reason)
-            }
-            SyncResult::Failed { path, error } => {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-                format!("✗ Failed: {} - {}", name, error)
-            }
-        }
     }
 
     /// Add a log message
@@ -487,12 +486,19 @@ impl App {
                 }
                 Ok(AppEvent::SyncCompleted(summary)) => {
                     self.last_sync = Some(Instant::now());
+                    self.status_message = format!(
+                        "Sync completed: {} ok, {} failed",
+                        summary.successful_operations,
+                        summary.failed_operations
+                    );
                     self.last_sync_summary = Some(summary);
                     self.current_operation = None;
                     self.show_progress = false;
                 }
                 Ok(AppEvent::SyncFailed(error)) => {
+                    self.add_log(format!("ERROR: {}", error));
                     self.show_error = Some(error);
+                    self.status_message = "Sync failed".to_string();
                     self.current_operation = None;
                     self.show_progress = false;
                 }
