@@ -565,14 +565,15 @@ mod tests {
     fn test_repository_list_creation() {
         let colors = ColorScheme::default();
         let repos = vec![RepoState {
-            local_path: PathBuf::from("/test/repo"),
-            remote_url: "https://github.com/test/repo".to_string(),
-            branch: "main".to_string(),
+            path: PathBuf::from("/test/repo"),
+            exists: true,
             has_uncommitted_changes: false,
             has_untracked_files: false,
-            commits_ahead: 0,
-            commits_behind: 0,
-            sync_status: None,
+            is_ahead_of_remote: false,
+            is_behind_remote: false,
+            has_conflicts: false,
+            remote_url: Some("https://github.com/test/repo".to_string()),
+            current_branch: Some("main".to_string()),
         }];
 
         let list = RepositoryList::new(&repos, &colors);

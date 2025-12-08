@@ -23,15 +23,16 @@ use std::io;
 
 /// Launch the TUI application
 pub async fn run_tui(config: Config) -> Result<()> {
-    // Setup terminal
+    // Create app state BEFORE entering raw mode
+    // This allows any initialization logs to display normally
+    let mut app = App::new(config).await?;
+
+    // Setup terminal (raw mode)
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-
-    // Create app state
-    let mut app = App::new(config).await?;
 
     // Main event loop
     let result = run_app(&mut terminal, &mut app).await;

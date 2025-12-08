@@ -2394,6 +2394,7 @@ dependencies = [
  "anyhow",
  "assert_fs",
  "assert_matches",
+ "async-trait",
  "chrono",
  "clap",
  "crossterm",

@@ -6,7 +6,7 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use reposentry::daemon::is_daemon_running;
 use reposentry::github::auth_setup;
 use reposentry::tui;
-use reposentry::{Config, Daemon, GitHubClient, SyncEngine};
+use reposentry::{Config, Daemon, Discovery, GitHubClient, GitHubDiscovery, HealthCheck, SyncEngine};
 
 #[derive(Parser)]
 #[command(name = "reposentry")]
@@ -14,7 +14,7 @@ use reposentry::{Config, Daemon, GitHubClient, SyncEngine};
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 
     /// Configuration file path (defaults to XDG config location)
     #[arg(short, long)]
@@ -82,9 +82,6 @@ enum Commands {
         #[arg(value_enum)]
         component: Option<DoctorComponent>,
     },
-
-    /// Launch interactive Terminal User Interface
-    Tui,
 }
 
 #[derive(Subcommand)]
@@ -143,30 +140,33 @@ enum DoctorComponent {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize logging
-    init_logging(cli.verbose)?;
-
-    info!("Starting RepoSentry v{}", env!("CARGO_PKG_VERSION"));
+    // Only initialize logging for CLI commands, not TUI
+    // TUI has its own log viewer and stdout logging breaks raw mode
+    let is_tui = cli.command.is_none();
+    if !is_tui {
+        init_logging(cli.verbose)?;
+        info!("Starting RepoSentry v{}", env!("CARGO_PKG_VERSION"));
+    }
 
     // Load configuration
     let config = load_config(cli.config).await?;
 
-    // Execute command
+    // Execute command (default to TUI if no command specified)
     match cli.command {
-        Commands::Init {
+        None => cmd_tui(&config).await,
+        Some(Commands::Init {
             base_dir,
             skip_auth,
-        } => cmd_init(base_dir, skip_auth, &config).await,
-        Commands::Auth { auth_command } => cmd_auth(auth_command, &config).await,
-        Commands::Sync {
+        }) => cmd_init(base_dir, skip_auth, &config).await,
+        Some(Commands::Auth { auth_command }) => cmd_auth(auth_command, &config).await,
+        Some(Commands::Sync {
             dry_run,
             force,
             org,
-        } => cmd_sync(dry_run, force, org, &config).await,
-        Commands::List { details, org } => cmd_list(details, org, &config).await,
-        Commands::Daemon { daemon_command } => cmd_daemon(daemon_command, &config).await,
-        Commands::Doctor { component } => cmd_doctor(component, &config).await,
-        Commands::Tui => cmd_tui(&config).await,
+        }) => cmd_sync(dry_run, force, org, &config).await,
+        Some(Commands::List { details, org }) => cmd_list(details, org, &config).await,
+        Some(Commands::Daemon { daemon_command }) => cmd_daemon(daemon_command, &config).await,
+        Some(Commands::Doctor { component }) => cmd_doctor(component, &config).await,
     }
 }
 
@@ -259,11 +259,19 @@ async fn cmd_sync(
 ) -> Result<()> {
     info!("Starting repository synchronization...");
 
-    if dry_run {
-        println!("🔍 Dry run mode - analyzing repository states");
+    // Create discovery and sync engine
+    let discovery = GitHubDiscovery::new(config.clone()).await?;
+    let sync_engine = SyncEngine::new(config.clone());
 
-        let sync_engine = SyncEngine::new((*config).clone()).await?;
-        let repo_states = sync_engine.dry_run().await?;
+    // Discover repositories
+    println!("🔍 Discovering repositories...");
+    let repos = discovery.discover().await?;
+    println!("   Found {} repositories", repos.len());
+
+    if dry_run {
+        println!("\n🔍 Dry run mode - analyzing repository states");
+
+        let repo_states = sync_engine.analyze_repos(&repos).await?;
 
         println!("📊 Repository Analysis Results:");
 
@@ -321,14 +329,13 @@ async fn cmd_sync(
     }
 
     // Real sync mode
-    println!("🔄 Running full repository synchronization");
+    println!("\n🔄 Running full repository synchronization");
 
     if force {
         println!("⚡ Force mode enabled");
     }
 
-    let sync_engine = SyncEngine::new((*config).clone()).await?;
-    let summary = sync_engine.run_sync().await?;
+    let summary = sync_engine.sync_repos(repos).await?;
 
     println!("\n🎉 Synchronization Complete!");
     println!("   📊 Total repositories: {}", summary.total_repositories);
@@ -537,78 +544,34 @@ async fn cmd_daemon(daemon_command: DaemonCommands, config: &Config) -> Result<(
 
 /// System health check and diagnostics
 async fn cmd_doctor(_component: Option<DoctorComponent>, config: &Config) -> Result<()> {
-    println!("🔍 RepoSentry System Diagnostics");
-    println!();
-
-    // Check git installation
-    println!("Git Installation:");
-    match std::process::Command::new("git").arg("--version").output() {
-        Ok(output) if output.status.success() => {
-            let version = String::from_utf8_lossy(&output.stdout);
-            println!("  ✅ Git installed: {}", version.trim());
-        }
-        Ok(_) => {
-            println!("  ❌ Git command failed");
-        }
-        Err(_) => {
-            println!("  ❌ Git not found in PATH");
-        }
-    }
-
-    // Check GitHub authentication
-    println!();
-    println!("GitHub Authentication:");
-    match GitHubClient::new(config).await {
-        Ok(client) => {
-            println!("  ✅ Authentication successful");
-            println!("  👤 Username: {}", client.username());
-        }
-        Err(e) => {
-            println!("  ❌ Authentication failed: {}", e);
-        }
-    }
-
-    // Check base directory
-    println!();
-    println!("Base Directory:");
-    let expanded_dir = shellexpand::full(&config.base_directory)?;
-    if std::path::Path::new(expanded_dir.as_ref()).exists() {
-        println!("  ✅ Base directory exists: {}", expanded_dir);
-    } else {
-        println!("  ⚠️  Base directory does not exist: {}", expanded_dir);
-        println!("     Run 'mkdir -p {}' to create it", expanded_dir);
-    }
-
-    // Check SSH keys
-    println!();
-    println!("SSH Configuration:");
-    let ssh_dir = dirs::home_dir().unwrap_or_default().join(".ssh");
-    if ssh_dir.exists() {
-        let ssh_keys = ["id_rsa", "id_ed25519", "id_ecdsa"];
-        let found_keys: Vec<_> = ssh_keys
-            .iter()
-            .filter(|key| ssh_dir.join(key).exists())
-            .collect();
-
-        if found_keys.is_empty() {
-            println!("  ⚠️  No SSH keys found in ~/.ssh/");
-            println!("     Generate one with: ssh-keygen -t ed25519 -C \"your_email@example.com\"");
-        } else {
-            println!("  ✅ SSH keys found: {:?}", found_keys);
-        }
-    } else {
-        println!("  ❌ ~/.ssh directory not found");
-    }
-
-    println!();
-    println!("✅ Diagnostics complete");
-
+    let health = HealthCheck::run(config).await;
+    print_health_report(&health);
     Ok(())
 }
 
 /// Launch the Terminal User Interface
 async fn cmd_tui(config: &Config) -> Result<()> {
-    info!("Launching TUI interface");
+    // Preflight checks - ensure system is properly configured
+    let health = HealthCheck::run(config).await;
+
+    if !health.all_passed() {
+        print_health_report(&health);
+        println!();
+        println!("❌ Cannot start TUI - fix the errors above first");
+        std::process::exit(1);
+    }
+
+    // Show warnings but continue
+    let warnings = health.warnings();
+    if !warnings.is_empty() {
+        for warning in warnings {
+            println!("⚠️  {}", warning.message);
+            if let Some(details) = &warning.details {
+                println!("   {}", details);
+            }
+        }
+        println!();
+    }
 
     // Clone config for TUI ownership
     let config = config.clone();
@@ -617,4 +580,38 @@ async fn cmd_tui(config: &Config) -> Result<()> {
     tui::run_tui(config).await?;
 
     Ok(())
+}
+
+/// Print health check report to stdout
+fn print_health_report(health: &HealthCheck) {
+    use reposentry::health::CheckResult;
+
+    fn print_check(name: &str, result: &CheckResult) {
+        println!("{}:", name);
+        let icon = if result.passed {
+            if result.is_warning { "⚠️ " } else { "✅" }
+        } else {
+            "❌"
+        };
+        println!("  {} {}", icon, result.message);
+        if let Some(details) = &result.details {
+            for line in details.lines() {
+                println!("     {}", line);
+            }
+        }
+    }
+
+    println!("🔍 RepoSentry System Diagnostics");
+    println!();
+
+    for (name, result) in health.all_checks() {
+        print_check(name, result);
+        println!();
+    }
+
+    if health.all_passed() {
+        println!("✅ All checks passed");
+    } else {
+        println!("❌ Some checks failed");
+    }
 }

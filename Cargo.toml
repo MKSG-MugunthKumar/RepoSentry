@@ -68,6 +68,9 @@ futures-util = "0.3"
 # Pattern matching for repository exclusions
 regex = "1.10"
 
+# Async trait support for dyn-compatible async traits
+async-trait = "0.1"
+
 # Terminal User Interface
 ratatui = "0.25"
 crossterm = "0.27"

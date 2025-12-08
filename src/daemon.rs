@@ -4,6 +4,7 @@
 //! in the background with configurable sync intervals, PID file management,
 //! and graceful shutdown handling.
 
+use crate::discovery::{Discovery, GitHubDiscovery};
 use crate::sync::{SyncEngine, SyncSummary};
 use crate::Config;
 use anyhow::{Context, Result};
@@ -47,6 +48,7 @@ use tracing::{debug, error, info, warn};
 /// Daemon state and control
 pub struct Daemon {
     config: Arc<Config>,
+    discovery: GitHubDiscovery,
     sync_engine: SyncEngine,
     shutdown_sender: broadcast::Sender<()>,
     is_running: Arc<AtomicBool>,
@@ -69,9 +71,14 @@ impl Daemon {
     /// Create a new daemon instance
     pub async fn new(config: Config) -> Result<Self> {
         let config = Arc::new(config);
-        let sync_engine = SyncEngine::new(config.as_ref().clone())
+
+        // Create discovery provider
+        let discovery = GitHubDiscovery::new(config.as_ref().clone())
             .await
-            .context("Failed to create sync engine for daemon")?;
+            .context("Failed to create GitHub discovery for daemon")?;
+
+        // Create sync engine (now synchronous)
+        let sync_engine = SyncEngine::new(config.as_ref().clone());
 
         let (shutdown_sender, _) = broadcast::channel(1);
         let is_running = Arc::new(AtomicBool::new(false));
@@ -87,6 +94,7 @@ impl Daemon {
 
         Ok(Self {
             config,
+            discovery,
             sync_engine,
             shutdown_sender,
             is_running,
@@ -252,13 +260,22 @@ impl Daemon {
                     debug!("Starting scheduled sync operation");
                     let sync_start = Instant::now();
 
-                    match self.sync_engine.run_sync().await {
-                        Ok(summary) => {
-                            let sync_duration = sync_start.elapsed();
-                            self.log_sync_success(&summary, sync_duration);
+                    // Discover repositories first
+                    match self.discovery.discover().await {
+                        Ok(repos) => {
+                            // Then sync them
+                            match self.sync_engine.sync_repos(repos).await {
+                                Ok(summary) => {
+                                    let sync_duration = sync_start.elapsed();
+                                    self.log_sync_success(&summary, sync_duration);
+                                }
+                                Err(e) => {
+                                    self.log_sync_failure(&e);
+                                }
+                            }
                         }
                         Err(e) => {
-                            self.log_sync_failure(&e);
+                            error!("Repository discovery failed: {:?}", e);
                         }
                     }
                 }

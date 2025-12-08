@@ -570,6 +570,135 @@ impl GitClient {
 
         Ok(())
     }
+
+    // =========================================================================
+    // RepoSpec-based methods (provider-agnostic)
+    // =========================================================================
+
+    /// Sync a repository using RepoSpec (provider-agnostic)
+    ///
+    /// This method uses the pre-computed local_path and clone_url from RepoSpec,
+    /// making it work with any git hosting provider.
+    pub async fn sync_from_spec(&self, spec: &crate::discovery::RepoSpec) -> Result<SyncResult> {
+        let target_path = &spec.local_path;
+
+        if !target_path.exists() {
+            return self.clone_from_spec(spec).await;
+        }
+
+        info!(
+            "Syncing repository: {} at {}",
+            spec.full_name(),
+            target_path.display()
+        );
+
+        // Analyze current state
+        let state = self
+            .analyze_repo_state(target_path, &spec.clone_url)
+            .await
+            .context("Failed to analyze repository state")?;
+
+        // Decide sync strategy based on state
+        if state.has_uncommitted_changes || state.has_untracked_files {
+            if self.config.sync.auto_stash {
+                info!("Auto-stashing changes before sync");
+                self.git_stash(target_path).await?;
+            } else {
+                return Ok(SyncResult::Skipped {
+                    path: target_path.clone(),
+                    reason: "Uncommitted changes detected".to_string(),
+                });
+            }
+        }
+
+        if state.has_conflicts {
+            warn!(
+                "Repository has conflicts, falling back to fetch-only: {}",
+                spec.full_name()
+            );
+            self.git_fetch(target_path).await?;
+            return Ok(SyncResult::FetchedOnly {
+                path: target_path.clone(),
+                reason: "Repository has unresolved conflicts".to_string(),
+            });
+        }
+
+        // Perform the sync based on strategy
+        match self.config.sync.strategy.as_str() {
+            "fetch-only" => {
+                self.git_fetch(target_path).await?;
+                Ok(SyncResult::FetchedOnly {
+                    path: target_path.clone(),
+                    reason: "Fetch-only strategy configured".to_string(),
+                })
+            }
+            "safe-pull" | _ => self.git_pull(target_path).await,
+        }
+    }
+
+    /// Clone a repository using RepoSpec (provider-agnostic)
+    pub async fn clone_from_spec(&self, spec: &crate::discovery::RepoSpec) -> Result<SyncResult> {
+        let target_path = &spec.local_path;
+
+        info!(
+            "Cloning repository: {} to {}",
+            spec.full_name(),
+            target_path.display()
+        );
+
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = target_path.parent() {
+            if !parent.exists() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .context("Failed to create parent directory")?;
+            }
+        }
+
+        // Clone the repository
+        let output = AsyncCommand::new("git")
+            .args(["clone", &spec.clone_url, &target_path.to_string_lossy()])
+            .output()
+            .await
+            .context("Failed to clone repository")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+
+            // Cleanup on error if configured
+            if self.config.advanced.cleanup_on_error && target_path.exists() {
+                let _ = tokio::fs::remove_dir_all(target_path).await;
+            }
+
+            return Err(anyhow!("Clone failed: {}", stderr));
+        }
+
+        // Verify clone if configured
+        if self.config.advanced.verify_clone {
+            if let Err(e) = self.verify_repository_integrity(target_path).await {
+                if self.config.advanced.cleanup_on_error {
+                    let _ = tokio::fs::remove_dir_all(target_path).await;
+                }
+                return Err(e);
+            }
+        }
+
+        // Preserve timestamps if configured
+        if self.config.advanced.preserve_timestamps {
+            if let Err(e) = self.preserve_git_timestamps(target_path).await {
+                warn!("Failed to preserve timestamps: {}", e);
+            }
+        }
+
+        Ok(SyncResult::Cloned {
+            path: target_path.clone(),
+        })
+    }
+
+    /// Analyze repository state using RepoSpec
+    pub async fn analyze_from_spec(&self, spec: &crate::discovery::RepoSpec) -> Result<RepoState> {
+        self.analyze_repo_state(&spec.local_path, &spec.clone_url).await
+    }
 }
 
 #[cfg(test)]

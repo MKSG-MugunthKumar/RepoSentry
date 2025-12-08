@@ -3,7 +3,7 @@
 
 # Base directory for repository synchronization
 # Supports environment variable expansion
-base_directory: "${HOME}/dev"
+base_directory: "${HOME}/dev1"
 
 # Repository filtering configuration
 filters:

@@ -18,13 +18,17 @@
 
 pub mod config;
 pub mod daemon;
+pub mod discovery;
 pub mod git;
 pub mod github;
+pub mod health;
 pub mod sync;
 pub mod tui;
 
 pub use config::Config;
 pub use daemon::{Daemon, DaemonStatus};
+pub use discovery::{Discovery, RepoSpec, CloneMethod, GitHubDiscovery};
 pub use git::{GitClient, RepoState, SyncResult};
 pub use github::GitHubClient;
+pub use health::HealthCheck;
 pub use sync::{SyncEngine, SyncSummary};

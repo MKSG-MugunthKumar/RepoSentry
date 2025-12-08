@@ -7,7 +7,6 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use tracing::{debug, error};
 
 use crate::sync::SyncSummary;
 
@@ -66,15 +65,12 @@ impl EventHandler {
             // Check if we need to send a tick
             if self.last_tick.elapsed() >= self.tick_interval {
                 self.last_tick = Instant::now();
-                if let Err(e) = self.sender.send(AppEvent::Tick) {
-                    error!("Failed to send tick event: {}", e);
-                }
+                let _ = self.sender.send(AppEvent::Tick);
             }
 
             // Try to receive an event with a timeout
             match tokio::time::timeout(Duration::from_millis(50), self.receiver.recv()).await {
                 Ok(Some(event)) => {
-                    debug!("Received event: {:?}", event);
                     return Ok(event);
                 }
                 Ok(None) => {
@@ -198,30 +194,22 @@ impl AsyncEventDispatcher {
 
     /// Send a sync completed event
     pub fn sync_completed(&self, summary: SyncSummary) {
-        if let Err(e) = self.sender.send(AppEvent::SyncCompleted(summary)) {
-            error!("Failed to send sync completed event: {}", e);
-        }
+        let _ = self.sender.send(AppEvent::SyncCompleted(summary));
     }
 
     /// Send a sync failed event
     pub fn sync_failed(&self, error: String) {
-        if let Err(e) = self.sender.send(AppEvent::SyncFailed(error)) {
-            error!("Failed to send sync failed event: {}", e);
-        }
+        let _ = self.sender.send(AppEvent::SyncFailed(error));
     }
 
     /// Send a status update event
     pub fn status_update(&self, message: String) {
-        if let Err(e) = self.sender.send(AppEvent::StatusUpdate(message)) {
-            error!("Failed to send status update event: {}", e);
-        }
+        let _ = self.sender.send(AppEvent::StatusUpdate(message));
     }
 
     /// Send a configuration reloaded event
     pub fn config_reloaded(&self) {
-        if let Err(e) = self.sender.send(AppEvent::ConfigReloaded) {
-            error!("Failed to send config reloaded event: {}", e);
-        }
+        let _ = self.sender.send(AppEvent::ConfigReloaded);
     }
 }
 

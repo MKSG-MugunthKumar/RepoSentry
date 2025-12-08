@@ -480,11 +480,181 @@ mod tests {
     }
 
     #[test]
-    fn test_core_functionality() {
-        // Simple test to verify the core config functionality works
-        let config = Config::default();
-        assert!(config.base_directory.contains("dev"));
-        assert!(config.github.include_organizations);
-        assert!(!config.github.include_forks);
+    fn test_age_filter_duration() {
+        let mut config = Config::default();
+
+        // Test 1 month
+        config.filters.age.max_age = Some("1month".to_string());
+        assert_eq!(config.age_filter_duration().unwrap().num_days(), 30);
+
+        // Test 3 months
+        config.filters.age.max_age = Some("3month".to_string());
+        assert_eq!(config.age_filter_duration().unwrap().num_days(), 90);
+
+        // Test 6 months
+        config.filters.age.max_age = Some("6month".to_string());
+        assert_eq!(config.age_filter_duration().unwrap().num_days(), 180);
+
+        // Test invalid
+        config.filters.age.max_age = Some("invalid".to_string());
+        assert!(config.age_filter_duration().is_none());
+
+        // Test none
+        config.filters.age.max_age = None;
+        assert!(config.age_filter_duration().is_none());
+    }
+
+    #[test]
+    fn test_size_filter_bytes() {
+        let mut config = Config::default();
+
+        // Test 100MB
+        config.filters.size.max_size = Some("100MB".to_string());
+        assert_eq!(config.size_filter_bytes().unwrap(), 100 * 1024 * 1024);
+
+        // Test 1GB
+        config.filters.size.max_size = Some("1GB".to_string());
+        assert_eq!(config.size_filter_bytes().unwrap(), 1024 * 1024 * 1024);
+
+        // Test invalid
+        config.filters.size.max_size = Some("invalid".to_string());
+        assert!(config.size_filter_bytes().is_none());
+
+        // Test none
+        config.filters.size.max_size = None;
+        assert!(config.size_filter_bytes().is_none());
+    }
+
+    #[test]
+    fn test_expand_paths() {
+        // Set up test environment
+        env::set_var("TEST_REPOSENTRY_HOME", "/test/home");
+
+        let mut config = Config::default();
+        config.base_directory = "${TEST_REPOSENTRY_HOME}/dev".to_string();
+
+        config.expand_paths().expect("Failed to expand paths");
+
+        assert_eq!(config.base_directory, "/test/home/dev");
+
+        // Clean up
+        env::remove_var("TEST_REPOSENTRY_HOME");
+    }
+
+    #[test]
+    fn test_config_load_nonexistent_file() {
+        let nonexistent_path = Path::new("/nonexistent/path/config.yml");
+        let result = Config::load(nonexistent_path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_save_and_load() {
+        let (_temp_dir, config_dir) = setup_test_config_dir();
+        let config_path = config_dir.join("config.yml");
+
+        // Create a config with non-default values
+        let mut config = Config::default();
+        config.base_directory = "/custom/path".to_string();
+        config.github.username = Some("testuser".to_string());
+        config.filters.age.max_age = Some("1month".to_string());
+        config.sync.max_parallel = 8;
+
+        // Save the config
+        config.save(&config_path).expect("Failed to save config");
+
+        // Load it back
+        let loaded_config = Config::load(&config_path).expect("Failed to load config");
+
+        assert_eq!(loaded_config.base_directory, "/custom/path");
+        assert_eq!(loaded_config.github.username, Some("testuser".to_string()));
+        assert_eq!(loaded_config.filters.age.max_age, Some("1month".to_string()));
+        assert_eq!(loaded_config.sync.max_parallel, 8);
+    }
+
+    #[test]
+    fn test_config_default_path_xdg() {
+        // This test verifies that the default path respects XDG directories
+        let default_path = Config::default_config_path().expect("Failed to get default path");
+        assert!(default_path.to_string_lossy().contains("reposentry"));
+        assert!(default_path.to_string_lossy().ends_with("config.yml"));
+    }
+
+    #[test]
+    fn test_filtering_methods() {
+        let mut config = Config::default();
+        config.filters.age.max_age = Some("3month".to_string());
+        config.filters.size.max_size = Some("1GB".to_string());
+
+        // Test age filtering duration
+        assert_eq!(config.age_filter_duration().unwrap().num_days(), 90);
+
+        // Test size filtering bytes
+        assert_eq!(config.size_filter_bytes().unwrap(), 1024 * 1024 * 1024);
+
+        // Test should_filter_by_age
+        let old_timestamp = Utc::now() - Duration::days(100);
+        let recent_timestamp = Utc::now() - Duration::days(30);
+
+        assert!(config.should_filter_by_age(&old_timestamp));
+        assert!(!config.should_filter_by_age(&recent_timestamp));
+
+        // Test should_filter_by_size
+        let large_size: u64 = 2 * 1024 * 1024 * 1024; // 2GB
+        let small_size: u64 = 500 * 1024 * 1024; // 500MB
+
+        assert!(config.should_filter_by_size(large_size));
+        assert!(!config.should_filter_by_size(small_size));
+    }
+
+    #[test]
+    fn test_yaml_parsing() {
+        let yaml_content = r#"
+base_directory: "${HOME}/custom-dev"
+filters:
+  age:
+    max_age: "1month"
+  size:
+    max_size: "100MB"
+github:
+  auth_method: "gh_cli"
+  username: "testuser"
+  include_organizations: false
+  include_forks: true
+sync:
+  max_parallel: 8
+  timeout: 600
+  auto_stash: true
+  fast_forward_only: false
+daemon:
+  enabled: true
+  interval: "1h"
+logging:
+  level: "debug"
+  format: "json"
+  color: false
+organization:
+  separate_org_dirs: false
+advanced:
+  preserve_timestamps: false
+"#;
+
+        let config: Config = serde_yaml::from_str(yaml_content).expect("Failed to parse YAML");
+
+        assert_eq!(config.base_directory, "${HOME}/custom-dev");
+        assert_eq!(config.filters.age.max_age, Some("1month".to_string()));
+        assert_eq!(config.filters.size.max_size, Some("100MB".to_string()));
+        assert_eq!(config.github.username, Some("testuser".to_string()));
+        assert!(!config.github.include_organizations);
+        assert!(config.github.include_forks);
+        assert_eq!(config.sync.max_parallel, 8);
+        assert_eq!(config.sync.timeout, 600);
+        assert!(config.sync.auto_stash);
+        assert!(!config.sync.fast_forward_only);
+        assert!(config.daemon.enabled);
+        assert_eq!(config.daemon.interval, "1h");
+        assert!(!config.logging.color);
+        assert!(!config.organization.separate_org_dirs);
+        assert!(!config.advanced.preserve_timestamps);
     }
 }
