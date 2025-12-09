@@ -557,7 +557,7 @@ impl GitClient {
 
     async fn verify_repository_integrity(&self, path: &Path) -> Result<()> {
         let output = AsyncCommand::new("git")
-            .args(["fsck", "--quick"])
+            .args(["fsck"])
             .current_dir(path)
             .output()
             .await
