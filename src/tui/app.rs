@@ -74,6 +74,7 @@ pub struct App {
     // Discovery state
     discovery_ok: bool,
     is_loading: bool,
+    is_analyzing: bool,
     discovery_receiver: Option<mpsc::Receiver<DiscoveryMessage>>,
 }
 
@@ -83,11 +84,10 @@ pub enum DiscoveryMessage {
     Started,
     /// Progress update
     Progress(String),
-    /// Discovery completed successfully
-    Completed {
-        specs: Vec<RepoSpec>,
-        states: Vec<RepoState>,
-    },
+    /// Repositories discovered (before local analysis)
+    SpecsDiscovered(Vec<RepoSpec>),
+    /// Analysis completed for repositories
+    AnalysisCompleted(Vec<RepoState>),
     /// Discovery failed
     Failed(String),
 }
@@ -134,15 +134,20 @@ impl App {
 
                     match discovery.discover().await {
                         Ok(specs) => {
+                            let count = specs.len();
+
+                            // Send specs immediately so UI can show the list
+                            let _ = tx.send(DiscoveryMessage::SpecsDiscovered(specs.clone())).await;
+
                             let _ = tx.send(DiscoveryMessage::Progress(
-                                format!("Found {} repositories, analyzing...", specs.len())
+                                format!("Analyzing {} repositories...", count)
                             )).await;
 
-                            // Analyze repos - this is also slow, do it in background
+                            // Analyze repos - this is slower, runs after list is displayed
                             let sync_engine = SyncEngine::new(discovery_config);
                             let states = sync_engine.analyze_repos(&specs).await.unwrap_or_default();
 
-                            let _ = tx.send(DiscoveryMessage::Completed { specs, states }).await;
+                            let _ = tx.send(DiscoveryMessage::AnalysisCompleted(states)).await;
                         }
                         Err(e) => {
                             let _ = tx.send(DiscoveryMessage::Failed(format!("Discovery failed: {}", e))).await;
@@ -184,6 +189,7 @@ impl App {
             should_exit: false,
             discovery_ok: false,
             is_loading: true,
+            is_analyzing: false,
             discovery_receiver: Some(rx),
         })
     }
@@ -532,26 +538,52 @@ impl App {
                     self.status_message = msg.clone();
                     self.add_log(msg);
                 }
-                Ok(DiscoveryMessage::Completed { specs, states }) => {
+                Ok(DiscoveryMessage::SpecsDiscovered(specs)) => {
                     let count = specs.len();
                     self.repo_specs = specs;
-                    self.repositories = states;
+
+                    // Create placeholder RepoState entries for immediate display
+                    // These will be updated when analysis completes
+                    self.repositories = self
+                        .repo_specs
+                        .iter()
+                        .map(|spec| RepoState {
+                            path: spec.local_path.clone(),
+                            exists: spec.local_path.exists(),
+                            has_uncommitted_changes: false,
+                            has_untracked_files: false,
+                            is_ahead_of_remote: false,
+                            is_behind_remote: false,
+                            has_conflicts: false,
+                            current_branch: None,
+                            remote_url: Some(spec.clone_url.clone()),
+                        })
+                        .collect();
+
                     self.discovery_ok = true;
                     self.is_loading = false;
-                    self.current_operation = None;
-                    self.status_message = "Ready".to_string();
-                    self.add_log(format!("Loaded {} repositories", count));
+                    self.is_analyzing = true;
+                    self.current_operation = Some("Analyzing local repositories...".to_string());
+                    self.add_log(format!("Found {} repositories, analyzing local state...", count));
 
                     // Select first repo if available
                     if !self.repositories.is_empty() {
                         self.list_state.select(Some(0));
                     }
+                }
+                Ok(DiscoveryMessage::AnalysisCompleted(states)) => {
+                    self.repositories = states;
+                    self.is_analyzing = false;
+                    self.current_operation = None;
+                    self.status_message = "Ready".to_string();
+                    self.add_log(format!("Analysis complete for {} repositories", self.repositories.len()));
 
                     // Clear the receiver since we're done
                     self.discovery_receiver = None;
                 }
                 Ok(DiscoveryMessage::Failed(error)) => {
                     self.is_loading = false;
+                    self.is_analyzing = false;
                     self.current_operation = None;
                     self.status_message = "Discovery failed".to_string();
                     self.add_log(format!("ERROR: {}", error));
@@ -566,8 +598,9 @@ impl App {
                 Err(mpsc::error::TryRecvError::Disconnected) => {
                     // Channel closed, clear it
                     self.discovery_receiver = None;
-                    if self.is_loading {
+                    if self.is_loading || self.is_analyzing {
                         self.is_loading = false;
+                        self.is_analyzing = false;
                         self.add_log("Discovery task ended unexpectedly".to_string());
                     }
                 }
