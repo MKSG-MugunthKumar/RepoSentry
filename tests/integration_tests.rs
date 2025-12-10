@@ -53,7 +53,7 @@ fn test_doctor_command() {
 #[test]
 fn test_config_init_with_skip_auth() {
     let temp_dir = TempDir::new().unwrap();
-    let config_dir = temp_dir.child("reposentry");
+    let _config_dir = temp_dir.child("reposentry");
 
     let output = Command::new("cargo")
         .args(&[
