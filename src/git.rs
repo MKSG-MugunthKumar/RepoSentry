@@ -500,6 +500,13 @@ impl GitClient {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let commits_updated = self.parse_pull_output(&stdout);
 
+        // Update directory timestamp to match latest commit
+        if self.config.advanced.preserve_timestamps {
+            if let Err(e) = self.set_directory_commit_timestamp(path).await {
+                warn!("Failed to set directory timestamp after pull: {}", e);
+            }
+        }
+
         info!(
             "Successfully pulled {} commits in {}",
             commits_updated,
@@ -536,23 +543,62 @@ impl GitClient {
         }
     }
 
-    async fn preserve_git_timestamps(&self, path: &Path) -> Result<()> {
-        // Set file timestamps based on git commit history
+    /// Set the directory's modification timestamp to match the latest git commit
+    ///
+    /// This mirrors the behavior of the legacy bash script which preserves
+    /// the timestamp so file managers can sort repositories by activity.
+    pub async fn set_directory_commit_timestamp(&self, path: &Path) -> Result<()> {
+        // Get the latest commit timestamp (Unix epoch seconds)
         let output = AsyncCommand::new("git")
-            .args(["log", "--format=%H %ct", "--name-only", "--reverse"])
+            .args(["log", "-1", "--format=%ct"])
             .current_dir(path)
             .output()
             .await
-            .context("Failed to get git log for timestamp preservation")?;
+            .context("Failed to get latest commit timestamp")?;
 
         if !output.status.success() {
             return Err(anyhow!("Git log command failed"));
         }
 
-        // This is a simplified implementation
-        // A full implementation would parse the output and set file timestamps
-        debug!("Timestamp preservation completed for {}", path.display());
+        let timestamp_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if timestamp_str.is_empty() {
+            return Err(anyhow!("No commits found in repository"));
+        }
+
+        let timestamp: i64 = timestamp_str
+            .parse()
+            .context("Invalid timestamp from git log")?;
+
+        // Validate timestamp (between 2005 when Git was created and 2050)
+        const MIN_TIMESTAMP: i64 = 1104537600; // 2005-01-01
+        const MAX_TIMESTAMP: i64 = 2524608000; // 2050-01-01
+
+        if timestamp < MIN_TIMESTAMP || timestamp > MAX_TIMESTAMP {
+            return Err(anyhow!(
+                "Commit timestamp {} is outside valid range",
+                timestamp
+            ));
+        }
+
+        // Set the directory's modification time
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+        let mtime = UNIX_EPOCH + Duration::from_secs(timestamp as u64);
+        let atime = SystemTime::now(); // Keep access time as now
+
+        filetime::set_file_times(path, atime.into(), mtime.into())
+            .context("Failed to set directory timestamp")?;
+
+        debug!(
+            "Set directory timestamp to {} for {}",
+            timestamp,
+            path.display()
+        );
         Ok(())
+    }
+
+    async fn preserve_git_timestamps(&self, path: &Path) -> Result<()> {
+        // Set the directory timestamp to match the latest commit
+        self.set_directory_commit_timestamp(path).await
     }
 
     async fn verify_repository_integrity(&self, path: &Path) -> Result<()> {

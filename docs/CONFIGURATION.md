@@ -64,8 +64,8 @@ sync:
 # Daemon/background service configuration
 daemon:
   interval: "30m"           # Sync interval: 15m, 30m, 1h, 2h, 4h, daily
-  pid_file: "${HOME}/.local/share/reposentry/daemon.pid"
-  log_file: ""              # Log file path (empty = stdout)
+  pid_file: "reposentry.pid"  # Filename only - placed in XDG_RUNTIME_DIR or /tmp
+  log_file: "daemon.log"      # Filename only - placed in XDG_DATA_HOME/reposentry (empty = stdout)
   max_log_size: "100MB"     # Log rotation size
   startup_delay: "5s"       # Delay before first sync
 
@@ -274,10 +274,10 @@ Configure daemon process management:
 
 ```yaml
 daemon:
-  pid_file: "${HOME}/.local/share/reposentry/daemon.pid"
-  log_file: "${HOME}/.local/share/reposentry/daemon.log"
-  startup_delay: "5s"      # Delay before first sync
-  max_memory: "500MB"      # Memory limit (Linux only)
+  pid_file: "reposentry.pid"  # Filename only - auto-placed in XDG_RUNTIME_DIR or /tmp
+  log_file: "daemon.log"      # Filename only - auto-placed in XDG_DATA_HOME/reposentry
+  startup_delay: "5s"         # Delay before first sync
+  max_memory: "500MB"         # Memory limit (Linux only)
 ```
 
 ### Logging Configuration

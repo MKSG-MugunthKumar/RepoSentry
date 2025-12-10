@@ -128,9 +128,9 @@ sync:
 
 # Daemon configuration
 daemon:
-  interval: "30m"        # Sync interval: 30m, 1h, 2h
-  pid_file: "${HOME}/.local/share/reposentry/daemon.pid"
-  log_file: ""           # Empty = stdout when foreground
+  interval: "30m"          # Sync interval: 30m, 1h, 2h
+  pid_file: "reposentry.pid"  # Filename only - placed in XDG_RUNTIME_DIR
+  log_file: "daemon.log"      # Filename only - placed in XDG_DATA_HOME/reposentry
 ```
 
 ## Key Features

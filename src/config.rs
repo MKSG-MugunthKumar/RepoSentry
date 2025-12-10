@@ -124,12 +124,13 @@ pub struct DaemonConfig {
     #[serde(default = "default_interval")]
     pub interval: String, // "30m"
 
-    /// PID file location
-    #[serde(default = "default_pid_file")]
+    /// PID file name (placed in XDG_RUNTIME_DIR or /tmp)
+    #[serde(default = "default_pid_filename")]
     pub pid_file: String,
 
-    /// Log file location
-    #[serde(default = "default_log_file")]
+    /// Log file name (placed in XDG_DATA_HOME/reposentry or ~/.local/share/reposentry)
+    /// Empty string means log to stdout/stderr
+    #[serde(default = "default_log_filename")]
     pub log_file: String,
 }
 
@@ -200,21 +201,47 @@ fn default_timeout() -> u64 {
 fn default_interval() -> String {
     "30m".to_string()
 }
-fn default_pid_file() -> String {
+fn default_pid_filename() -> String {
+    "reposentry.pid".to_string()
+}
+
+fn default_log_filename() -> String {
+    "daemon.log".to_string()
+}
+
+/// Get the full PID file path, resolving filename to XDG-compliant location
+pub fn get_pid_file_path(filename: &str) -> String {
+    if filename.is_empty() {
+        return String::new();
+    }
+    // If it's already an absolute path, use it as-is
+    if filename.starts_with('/') || filename.contains('/') {
+        return filename.to_string();
+    }
+    // Otherwise, place in XDG_RUNTIME_DIR or /tmp
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-        format!("{}/reposentry.pid", runtime_dir)
+        format!("{}/{}", runtime_dir, filename)
     } else {
-        "/tmp/reposentry.pid".to_string()
+        format!("/tmp/{}", filename)
     }
 }
 
-fn default_log_file() -> String {
+/// Get the full log file path, resolving filename to XDG-compliant location
+pub fn get_log_file_path(filename: &str) -> String {
+    if filename.is_empty() {
+        return String::new();
+    }
+    // If it's already an absolute path, use it as-is
+    if filename.starts_with('/') || filename.contains('/') {
+        return filename.to_string();
+    }
+    // Otherwise, place in XDG_DATA_HOME/reposentry or ~/.local/share/reposentry
     if let Ok(data_home) = std::env::var("XDG_DATA_HOME") {
-        format!("{}/reposentry/daemon.log", data_home)
+        format!("{}/reposentry/{}", data_home, filename)
     } else if let Ok(home) = std::env::var("HOME") {
-        format!("{}/.local/share/reposentry/daemon.log", home)
+        format!("{}/.local/share/reposentry/{}", home, filename)
     } else {
-        "/tmp/reposentry-daemon.log".to_string()
+        format!("/tmp/{}", filename)
     }
 }
 fn default_log_level() -> String {
@@ -278,8 +305,8 @@ impl Default for DaemonConfig {
         Self {
             enabled: false,
             interval: default_interval(),
-            pid_file: default_pid_file(),
-            log_file: default_log_file(),
+            pid_file: default_pid_filename(),
+            log_file: default_log_filename(),
         }
     }
 }

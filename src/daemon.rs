@@ -4,6 +4,7 @@
 //! in the background with configurable sync intervals, PID file management,
 //! and graceful shutdown handling.
 
+use crate::config::{get_log_file_path, get_pid_file_path};
 use crate::discovery::{Discovery, GitHubDiscovery};
 use crate::sync::{SyncEngine, SyncSummary};
 use crate::Config;
@@ -84,12 +85,13 @@ impl Daemon {
         let is_running = Arc::new(AtomicBool::new(false));
 
         // Prepare PID file path if configured
-        let pid_file_path = if !config.daemon.pid_file.is_empty() {
-            let expanded_path = shellexpand::full(&config.daemon.pid_file)
-                .context("Failed to expand PID file path")?;
-            Some(PathBuf::from(expanded_path.as_ref()))
-        } else {
-            None
+        let pid_file_path = {
+            let resolved_path = get_pid_file_path(&config.daemon.pid_file);
+            if resolved_path.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(resolved_path))
+            }
         };
 
         Ok(Self {
@@ -139,14 +141,20 @@ impl Daemon {
     pub fn daemonize(&self) -> Result<()> {
         use daemonize::Daemonize;
 
-        let log_file = if !self.config.daemon.log_file.is_empty() {
-            let expanded_path = shellexpand::full(&self.config.daemon.log_file)
-                .context("Failed to expand log file path")?;
-            let log_file = std::fs::File::create(expanded_path.as_ref())
-                .context("Failed to create log file")?;
-            Some(log_file)
-        } else {
-            None
+        let log_file = {
+            let resolved_path = get_log_file_path(&self.config.daemon.log_file);
+            if resolved_path.is_empty() {
+                None
+            } else {
+                // Ensure parent directory exists
+                let path = PathBuf::from(&resolved_path);
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).context("Failed to create log directory")?;
+                }
+                let file = std::fs::File::create(&resolved_path)
+                    .context("Failed to create log file")?;
+                Some(file)
+            }
         };
 
         let mut daemonize = Daemonize::new();
@@ -355,40 +363,40 @@ pub async fn create_daemon_from_config() -> Result<Daemon> {
 
 /// Check if daemon is currently running by checking PID file
 pub fn is_daemon_running(config: &Config) -> Result<bool> {
-    if !config.daemon.pid_file.is_empty() {
-        let expanded_path =
-            shellexpand::full(&config.daemon.pid_file).context("Failed to expand PID file path")?;
-        let pid_file = PathBuf::from(expanded_path.as_ref());
+    let resolved_path = get_pid_file_path(&config.daemon.pid_file);
+    if resolved_path.is_empty() {
+        return Ok(false);
+    }
 
-        if pid_file.exists() {
-            let pid_str = fs::read_to_string(&pid_file).context("Failed to read PID file")?;
+    let pid_file = PathBuf::from(&resolved_path);
+    if pid_file.exists() {
+        let pid_str = fs::read_to_string(&pid_file).context("Failed to read PID file")?;
 
-            let pid: u32 = pid_str.trim().parse().context("Invalid PID in PID file")?;
+        let pid: u32 = pid_str.trim().parse().context("Invalid PID in PID file")?;
 
-            // Check if process is actually running
-            #[cfg(unix)]
-            {
-                use nix::errno::Errno;
-                use nix::sys::signal;
-                use nix::unistd::Pid;
+        // Check if process is actually running
+        #[cfg(unix)]
+        {
+            use nix::errno::Errno;
+            use nix::sys::signal;
+            use nix::unistd::Pid;
 
-                let pid = Pid::from_raw(pid as i32);
-                match signal::kill(pid, None) {
-                    Ok(_) => return Ok(true), // Process exists
-                    Err(Errno::ESRCH) => {
-                        // Process doesn't exist, remove stale PID file
-                        let _ = fs::remove_file(&pid_file);
-                        return Ok(false);
-                    }
-                    Err(_) => return Ok(true), // Assume running if we can't check
+            let pid = Pid::from_raw(pid as i32);
+            match signal::kill(pid, None) {
+                Ok(_) => return Ok(true), // Process exists
+                Err(Errno::ESRCH) => {
+                    // Process doesn't exist, remove stale PID file
+                    let _ = fs::remove_file(&pid_file);
+                    return Ok(false);
                 }
+                Err(_) => return Ok(true), // Assume running if we can't check
             }
+        }
 
-            #[cfg(not(unix))]
-            {
-                // On non-Unix platforms, just check if PID file exists
-                return Ok(true);
-            }
+        #[cfg(not(unix))]
+        {
+            // On non-Unix platforms, just check if PID file exists
+            return Ok(true);
         }
     }
 

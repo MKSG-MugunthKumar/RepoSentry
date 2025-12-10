@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use tracing::info;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
+use reposentry::config::{get_log_file_path, get_pid_file_path};
 use reposentry::daemon::is_daemon_running;
 use reposentry::github::auth_setup;
 use reposentry::tui;
@@ -438,8 +439,8 @@ async fn cmd_daemon(daemon_command: DaemonCommands, config: &Config) -> Result<(
                 {
                     daemon.daemonize()?;
                     println!("✅ Daemon started in background");
-                    println!("   PID file: {}", config.daemon.pid_file);
-                    println!("   Log file: {}", config.daemon.log_file);
+                    println!("   PID file: {}", get_pid_file_path(&config.daemon.pid_file));
+                    println!("   Log file: {}", get_log_file_path(&config.daemon.log_file));
                     println!("   Sync interval: {}", config.daemon.interval);
                 }
 
@@ -488,8 +489,9 @@ async fn cmd_daemon(daemon_command: DaemonCommands, config: &Config) -> Result<(
                 println!("      Successful: {}", status.successful_syncs);
                 println!("      Failed: {}", status.failed_syncs);
 
-                if !config.daemon.log_file.is_empty() {
-                    println!("   📄 Log file: {}", config.daemon.log_file);
+                let resolved_log = get_log_file_path(&config.daemon.log_file);
+                if !resolved_log.is_empty() {
+                    println!("   📄 Log file: {}", resolved_log);
                 }
             } else {
                 println!("   🔴 Status: Not running");

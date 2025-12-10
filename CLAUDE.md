@@ -94,30 +94,36 @@ src/
 
 ## Configuration Schema
 
-The planned TOML configuration format:
+YAML configuration format (see `config.example.yml` for full reference):
 
-```toml
-[reposentry]
-base_directory = "~/dev"
-sync_interval = "30m"
-max_parallel_repos = 4
+```yaml
+base_directory: "~/dev"
 
-[providers.github]
-enabled = true
-username = "MKSG-MugunthKumar"
-include_orgs = true
-exclude_repos = ["archived-*", "test-*"]
+github:
+  username: "your-username"
+  include_orgs: true
 
-[sync]
-strategy = "safe-pull"      # safe-pull, fetch-only, interactive
-auto_stash = false
-ff_only = true
-conflict_resolution = "prompt"  # prompt, skip, fetch-only
+sync:
+  strategy: "safe-pull"      # safe-pull, fetch-only, interactive
+  auto_stash: false
+  fast_forward_only: true
+  max_parallel: 4
 
-[logging]
-level = "info"
-format = "json"
-file = "/var/log/reposentry.log"
+daemon:
+  enabled: false
+  interval: "30m"
+  pid_file: "reposentry.pid"  # Filename only - placed in XDG_RUNTIME_DIR
+  log_file: "daemon.log"      # Filename only - placed in XDG_DATA_HOME/reposentry
+
+logging:
+  level: "info"
+  format: "compact"
+  color: true
+
+advanced:
+  preserve_timestamps: true   # Set directory mtime to latest commit date
+  verify_clone: false
+  cleanup_on_error: true
 ```
 
 ## Reference Implementation
