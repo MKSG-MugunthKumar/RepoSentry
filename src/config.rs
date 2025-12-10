@@ -23,6 +23,10 @@ pub struct Config {
     #[serde(default)]
     pub sync: SyncConfig,
 
+    /// Branch tracking configuration
+    #[serde(default)]
+    pub branches: BranchConfig,
+
     /// Daemon configuration
     #[serde(default)]
     pub daemon: DaemonConfig,
@@ -113,6 +117,51 @@ pub struct SyncConfig {
     pub fast_forward_only: bool,
 }
 
+/// Branch tracking configuration
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct BranchConfig {
+    /// Branch tracking strategy
+    /// - "default": Track the remote's default branch (main/master/etc.)
+    /// - "most-recent": Automatically switch to the branch with the most recent commit
+    #[serde(default = "default_branch_strategy")]
+    pub strategy: String,
+
+    /// Branch patterns to exclude from "most-recent" tracking
+    /// (e.g., dependabot/*, renovate/*, wip/*)
+    #[serde(default = "default_branch_exclude_patterns")]
+    pub exclude_patterns: Vec<String>,
+}
+
+impl BranchConfig {
+    /// Check if the "most-recent" strategy is enabled
+    pub fn is_most_recent_strategy(&self) -> bool {
+        self.strategy == "most-recent"
+    }
+
+    /// Check if a branch name matches any of the exclude patterns
+    pub fn is_branch_excluded(&self, branch_name: &str) -> bool {
+        for pattern in &self.exclude_patterns {
+            if let Some(prefix) = pattern.strip_suffix('*') {
+                // Prefix match (e.g., "dependabot/*")
+                if branch_name.starts_with(prefix) {
+                    return true;
+                }
+            } else if let Some(suffix) = pattern.strip_prefix('*') {
+                // Suffix match (e.g., "*.github.io")
+                if branch_name.ends_with(suffix) {
+                    return true;
+                }
+            } else {
+                // Exact match
+                if branch_name == pattern {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
 /// Daemon configuration
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DaemonConfig {
@@ -200,6 +249,18 @@ fn default_timeout() -> u64 {
 }
 fn default_interval() -> String {
     "30m".to_string()
+}
+fn default_branch_strategy() -> String {
+    "default".to_string()
+}
+fn default_branch_exclude_patterns() -> Vec<String> {
+    vec![
+        "dependabot/*".to_string(),
+        "renovate/*".to_string(),
+        "snyk-*".to_string(),
+        "wip/*".to_string(),
+        "experiment/*".to_string(),
+    ]
 }
 fn default_pid_filename() -> String {
     "reposentry.pid".to_string()
@@ -296,6 +357,15 @@ impl Default for SyncConfig {
             timeout: default_timeout(),
             auto_stash: false,
             fast_forward_only: default_true(),
+        }
+    }
+}
+
+impl Default for BranchConfig {
+    fn default() -> Self {
+        Self {
+            strategy: default_branch_strategy(),
+            exclude_patterns: default_branch_exclude_patterns(),
         }
     }
 }
@@ -468,6 +538,7 @@ impl Default for Config {
             filters: FilterConfig::default(),
             github: GitHubConfig::default(),
             sync: SyncConfig::default(),
+            branches: BranchConfig::default(),
             daemon: DaemonConfig::default(),
             logging: LoggingConfig::default(),
             organization: OrganizationConfig::default(),
@@ -686,5 +757,56 @@ advanced:
         assert!(!config.logging.color);
         assert!(!config.organization.separate_org_dirs);
         assert!(!config.advanced.preserve_timestamps);
+    }
+
+    #[test]
+    fn test_branch_config_defaults() {
+        let config = BranchConfig::default();
+        assert_eq!(config.strategy, "default");
+        assert!(!config.is_most_recent_strategy());
+        assert!(!config.exclude_patterns.is_empty());
+    }
+
+    #[test]
+    fn test_branch_config_most_recent_strategy() {
+        let mut config = BranchConfig::default();
+        config.strategy = "most-recent".to_string();
+        assert!(config.is_most_recent_strategy());
+    }
+
+    #[test]
+    fn test_branch_exclude_patterns() {
+        let config = BranchConfig::default();
+
+        // Test prefix matches
+        assert!(config.is_branch_excluded("dependabot/npm-update"));
+        assert!(config.is_branch_excluded("renovate/configure"));
+        assert!(config.is_branch_excluded("wip/feature"));
+        assert!(config.is_branch_excluded("experiment/crazy-idea"));
+        assert!(config.is_branch_excluded("snyk-fix-123"));
+
+        // Test non-matches
+        assert!(!config.is_branch_excluded("main"));
+        assert!(!config.is_branch_excluded("dev"));
+        assert!(!config.is_branch_excluded("feature/login"));
+        assert!(!config.is_branch_excluded("release/1.0"));
+    }
+
+    #[test]
+    fn test_branch_exclude_suffix_pattern() {
+        let mut config = BranchConfig::default();
+        config.exclude_patterns = vec!["*.tmp".to_string(), "test-*".to_string()];
+
+        // Test suffix match
+        assert!(config.is_branch_excluded("branch.tmp"));
+        assert!(config.is_branch_excluded("feature.tmp"));
+
+        // Test prefix match
+        assert!(config.is_branch_excluded("test-feature"));
+        assert!(config.is_branch_excluded("test-"));
+
+        // Test non-matches
+        assert!(!config.is_branch_excluded("main"));
+        assert!(!config.is_branch_excluded("tmp-branch"));
     }
 }
