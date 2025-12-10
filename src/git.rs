@@ -365,7 +365,8 @@ impl GitClient {
         Ok(!output.stdout.is_empty())
     }
 
-    async fn get_current_branch(&self, path: &Path) -> Result<Option<String>> {
+    /// Get the current local branch name
+    pub async fn get_current_branch(&self, path: &Path) -> Result<Option<String>> {
         let output = AsyncCommand::new("git")
             .args(["branch", "--show-current"])
             .current_dir(path)
@@ -540,6 +541,159 @@ impl GitClient {
             0
         } else {
             1 // Default assumption
+        }
+    }
+
+    // =========================================================================
+    // Branch Operations (for most-recent strategy)
+    // =========================================================================
+
+    /// Fetch all remote branches with pruning
+    pub async fn fetch_all_branches(&self, path: &Path) -> Result<()> {
+        let output = AsyncCommand::new("git")
+            .args(["fetch", "--all", "--prune"])
+            .current_dir(path)
+            .output()
+            .await
+            .context("Failed to fetch all branches")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("Git fetch --all failed: {}", stderr));
+        }
+
+        debug!("Fetched all branches for {}", path.display());
+        Ok(())
+    }
+
+    /// Get the most recently updated remote branch
+    ///
+    /// Returns the branch name (without origin/ prefix) that has the most recent commit.
+    /// Excludes branches matching the patterns in the branch config.
+    pub async fn get_most_recent_branch(&self, path: &Path) -> Result<Option<String>> {
+        // Get all remote branches sorted by commit date (most recent first)
+        let output = AsyncCommand::new("git")
+            .args([
+                "for-each-ref",
+                "--sort=-committerdate",
+                "--format=%(refname:short)",
+                "refs/remotes/origin/",
+            ])
+            .current_dir(path)
+            .output()
+            .await
+            .context("Failed to get remote branches")?;
+
+        if !output.status.success() {
+            return Err(anyhow!("Git for-each-ref failed"));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            // Remove "origin/" prefix
+            let branch = line.trim().strip_prefix("origin/").unwrap_or(line.trim());
+
+            // Skip HEAD reference
+            if branch == "HEAD" {
+                continue;
+            }
+
+            // Check if branch is excluded by config patterns
+            if self.config.branches.is_branch_excluded(branch) {
+                debug!("Skipping excluded branch: {}", branch);
+                continue;
+            }
+
+            return Ok(Some(branch.to_string()));
+        }
+
+        Ok(None)
+    }
+
+    /// Checkout a specific branch
+    pub async fn checkout_branch(&self, path: &Path, branch: &str) -> Result<()> {
+        // First, try to checkout if the branch already exists locally
+        let output = AsyncCommand::new("git")
+            .args(["checkout", branch])
+            .current_dir(path)
+            .output()
+            .await
+            .context("Failed to checkout branch")?;
+
+        if output.status.success() {
+            info!("Checked out branch {} in {}", branch, path.display());
+            return Ok(());
+        }
+
+        // Branch doesn't exist locally, create a tracking branch
+        let output = AsyncCommand::new("git")
+            .args(["checkout", "-b", branch, &format!("origin/{}", branch)])
+            .current_dir(path)
+            .output()
+            .await
+            .context("Failed to create tracking branch")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("Git checkout failed: {}", stderr));
+        }
+
+        info!(
+            "Created and checked out tracking branch {} in {}",
+            branch,
+            path.display()
+        );
+        Ok(())
+    }
+
+    /// Check if the repository has any local changes (uncommitted or untracked)
+    ///
+    /// This is a convenience method that combines multiple checks.
+    /// Returns true if there are ANY local changes that would prevent a safe branch switch.
+    pub async fn has_any_local_changes(&self, path: &Path) -> Result<bool> {
+        // Check for uncommitted changes (staged or unstaged)
+        let status_output = AsyncCommand::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(path)
+            .output()
+            .await
+            .context("Failed to check git status")?;
+
+        if !status_output.status.success() {
+            return Err(anyhow!("Git status failed"));
+        }
+
+        let status = String::from_utf8_lossy(&status_output.stdout);
+        if !status.trim().is_empty() {
+            debug!(
+                "Repository {} has local changes:\n{}",
+                path.display(),
+                status.trim()
+            );
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    /// Get the number of commits the local branch is ahead of the remote tracking branch
+    pub async fn commits_ahead_of_remote(&self, path: &Path, branch: &str) -> Result<u32> {
+        let output = AsyncCommand::new("git")
+            .args([
+                "rev-list",
+                "--count",
+                &format!("origin/{}..{}", branch, branch),
+            ])
+            .current_dir(path)
+            .output()
+            .await
+            .context("Failed to count commits ahead")?;
+
+        if output.status.success() {
+            let count_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            Ok(count_str.parse().unwrap_or(0))
+        } else {
+            Ok(0)
         }
     }
 
