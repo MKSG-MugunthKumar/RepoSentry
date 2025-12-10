@@ -8,10 +8,11 @@
 
 use crate::discovery::RepoSpec;
 use crate::git::{GitClient, RepoState, SyncResult};
+use crate::state::{EventType, RepoStatus, StateDb, SyncEventBuilder};
 use crate::Config;
 use anyhow::{Context, Result};
 use futures::stream::{FuturesUnordered, StreamExt};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
@@ -35,6 +36,7 @@ pub struct SyncSummary {
 pub struct SyncEngine {
     config: Arc<Config>,
     git_client: GitClient,
+    state_db: Option<Arc<Mutex<StateDb>>>,
 }
 
 impl SyncEngine {
@@ -43,13 +45,44 @@ impl SyncEngine {
         let config = Arc::new(config);
         let git_client = GitClient::new(config.as_ref().clone());
 
-        Self { config, git_client }
+        Self {
+            config,
+            git_client,
+            state_db: None,
+        }
+    }
+
+    /// Create a sync engine with state database for event tracking
+    pub fn with_state_db(config: Config) -> Result<Self> {
+        let config = Arc::new(config);
+        let git_client = GitClient::new(config.as_ref().clone());
+        let state_db = StateDb::open().context("Failed to open state database")?;
+
+        Ok(Self {
+            config,
+            git_client,
+            state_db: Some(Arc::new(Mutex::new(state_db))),
+        })
+    }
+
+    /// Create a sync engine with a custom state database (for testing)
+    pub fn with_custom_state_db(config: Config, state_db: StateDb) -> Self {
+        let config = Arc::new(config);
+        let git_client = GitClient::new(config.as_ref().clone());
+
+        Self {
+            config,
+            git_client,
+            state_db: Some(Arc::new(Mutex::new(state_db))),
+        }
     }
 
     /// Sync repositories from RepoSpec list (provider-agnostic)
     ///
     /// This is the primary sync method. It accepts pre-discovered repositories
     /// as `Vec<RepoSpec>` and performs parallel synchronization.
+    ///
+    /// If a state database is configured, sync results are automatically recorded.
     pub async fn sync_repos(&self, repos: Vec<RepoSpec>) -> Result<SyncSummary> {
         let start_time = Instant::now();
 
@@ -59,6 +92,9 @@ impl SyncEngine {
             .sync_specs_parallel(repos)
             .await
             .context("Failed to synchronize repositories")?;
+
+        // Record results to state database if configured
+        self.record_sync_results(&sync_results);
 
         let duration = start_time.elapsed();
         let summary = self.compile_summary(sync_results, duration);
@@ -248,6 +284,234 @@ impl SyncEngine {
     /// Get the git client for direct operations
     pub fn git_client(&self) -> &GitClient {
         &self.git_client
+    }
+
+    /// Get the state database (if configured)
+    pub fn state_db(&self) -> Option<&Arc<Mutex<StateDb>>> {
+        self.state_db.as_ref()
+    }
+
+    /// Record a sync result to the state database
+    fn record_sync_result(&self, result: &SyncResult, repo_full_name: &str) {
+        let Some(state_db) = &self.state_db else {
+            return;
+        };
+
+        let Ok(db) = state_db.lock() else {
+            warn!("Failed to acquire state database lock");
+            return;
+        };
+
+        // Record repo state and event based on result
+        match result {
+            SyncResult::Cloned { path, branch } => {
+                let branch_ref = branch.as_deref();
+                if let Err(e) = db.upsert_repo(
+                    repo_full_name,
+                    Some(&path.to_string_lossy()),
+                    branch_ref,
+                    RepoStatus::Ok,
+                    None,
+                ) {
+                    warn!("Failed to update repo state: {}", e);
+                }
+
+                let summary = format!(
+                    "Cloned {}",
+                    branch_ref.map(|b| format!(" on branch {}", b)).unwrap_or_default()
+                );
+                if let Err(e) = db.record_event(
+                    SyncEventBuilder::new(EventType::Cloned, summary).repo(repo_full_name),
+                ) {
+                    warn!("Failed to record clone event: {}", e);
+                }
+            }
+
+            SyncResult::Pulled {
+                path,
+                commits_updated,
+                branch,
+            } => {
+                let branch_ref = branch.as_deref();
+                if let Err(e) = db.upsert_repo(
+                    repo_full_name,
+                    Some(&path.to_string_lossy()),
+                    branch_ref,
+                    RepoStatus::Ok,
+                    None,
+                ) {
+                    warn!("Failed to update repo state: {}", e);
+                }
+
+                // Only record pull event if commits were updated (not just up to date)
+                if *commits_updated > 0 {
+                    let summary = format!("Pulled {} commits", commits_updated);
+                    if let Err(e) = db.record_event(
+                        SyncEventBuilder::new(EventType::Pulled, summary).repo(repo_full_name),
+                    ) {
+                        warn!("Failed to record pull event: {}", e);
+                    }
+                }
+            }
+
+            SyncResult::BranchSwitched {
+                path,
+                from_branch,
+                to_branch,
+                commits_updated,
+            } => {
+                if let Err(e) = db.upsert_repo(
+                    repo_full_name,
+                    Some(&path.to_string_lossy()),
+                    Some(to_branch),
+                    RepoStatus::Ok,
+                    None,
+                ) {
+                    warn!("Failed to update repo state: {}", e);
+                }
+
+                let summary = format!(
+                    "Switched from {} to {} ({} commits)",
+                    from_branch, to_branch, commits_updated
+                );
+                if let Err(e) = db.record_event(
+                    SyncEventBuilder::new(EventType::BranchSwitch, summary)
+                        .repo(repo_full_name)
+                        .details(format!(
+                            "{{\"from\": \"{}\", \"to\": \"{}\", \"commits\": {}}}",
+                            from_branch, to_branch, commits_updated
+                        )),
+                ) {
+                    warn!("Failed to record branch switch event: {}", e);
+                }
+            }
+
+            SyncResult::FetchedOnly { path, reason } => {
+                // Determine if this is due to local changes or conflicts
+                let (event_type, status) = if reason.contains("local changes") {
+                    (EventType::SkippedLocalChanges, RepoStatus::Skipped)
+                } else if reason.contains("conflict") {
+                    (EventType::SkippedConflicts, RepoStatus::Skipped)
+                } else if reason.contains("ahead") {
+                    (EventType::SkippedAheadOfRemote, RepoStatus::Skipped)
+                } else {
+                    // Generic fetch-only, still mark as OK since fetch succeeded
+                    (EventType::Pulled, RepoStatus::Ok)
+                };
+
+                if let Err(e) = db.upsert_repo(
+                    repo_full_name,
+                    Some(&path.to_string_lossy()),
+                    None,
+                    status,
+                    Some(reason),
+                ) {
+                    warn!("Failed to update repo state: {}", e);
+                }
+
+                // Only record event if it was a skip (not a normal fetch)
+                if event_type != EventType::Pulled {
+                    let summary = format!("Fetch only: {}", reason);
+                    if let Err(e) = db.record_event(
+                        SyncEventBuilder::new(event_type, summary).repo(repo_full_name),
+                    ) {
+                        warn!("Failed to record fetch-only event: {}", e);
+                    }
+                }
+            }
+
+            SyncResult::UpToDate { path, branch } => {
+                if let Err(e) = db.upsert_repo(
+                    repo_full_name,
+                    Some(&path.to_string_lossy()),
+                    branch.as_deref(),
+                    RepoStatus::Ok,
+                    None,
+                ) {
+                    warn!("Failed to update repo state: {}", e);
+                }
+                // Don't record event for up-to-date repos (too noisy)
+            }
+
+            SyncResult::Skipped { path, reason } => {
+                // Determine skip type for proper categorization
+                let event_type = if reason.contains("local changes") {
+                    EventType::SkippedLocalChanges
+                } else if reason.contains("conflict") {
+                    EventType::SkippedConflicts
+                } else if reason.contains("ahead") {
+                    EventType::SkippedAheadOfRemote
+                } else {
+                    EventType::SkippedLocalChanges // Default to local changes
+                };
+
+                if let Err(e) = db.upsert_repo(
+                    repo_full_name,
+                    Some(&path.to_string_lossy()),
+                    None,
+                    RepoStatus::Skipped,
+                    Some(reason),
+                ) {
+                    warn!("Failed to update repo state: {}", e);
+                }
+
+                let summary = format!("Skipped: {}", reason);
+                if let Err(e) = db.record_event(
+                    SyncEventBuilder::new(event_type, summary).repo(repo_full_name),
+                ) {
+                    warn!("Failed to record skip event: {}", e);
+                }
+            }
+
+            SyncResult::Failed { path, error } => {
+                if let Err(e) = db.upsert_repo(
+                    repo_full_name,
+                    Some(&path.to_string_lossy()),
+                    None,
+                    RepoStatus::Error,
+                    Some(error),
+                ) {
+                    warn!("Failed to update repo state: {}", e);
+                }
+
+                let summary = format!("Sync error: {}", error);
+                if let Err(e) = db.record_event(
+                    SyncEventBuilder::new(EventType::SyncError, summary).repo(repo_full_name),
+                ) {
+                    warn!("Failed to record error event: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Record all sync results to the state database
+    pub fn record_sync_results(&self, results: &[SyncResult]) {
+        for result in results {
+            // Extract repo full name from the path
+            let repo_name = match result {
+                SyncResult::Cloned { path, .. }
+                | SyncResult::Pulled { path, .. }
+                | SyncResult::BranchSwitched { path, .. }
+                | SyncResult::FetchedOnly { path, .. }
+                | SyncResult::UpToDate { path, .. }
+                | SyncResult::Skipped { path, .. }
+                | SyncResult::Failed { path, .. } => {
+                    // Try to extract owner/repo from path (assuming structure like /base/owner/repo or /base/repo)
+                    let components: Vec<_> = path.components().rev().take(2).collect();
+                    match components.as_slice() {
+                        [repo, owner] => format!(
+                            "{}/{}",
+                            owner.as_os_str().to_string_lossy(),
+                            repo.as_os_str().to_string_lossy()
+                        ),
+                        [repo] => repo.as_os_str().to_string_lossy().to_string(),
+                        _ => path.to_string_lossy().to_string(),
+                    }
+                }
+            };
+
+            self.record_sync_result(result, &repo_name);
+        }
     }
 }
 
