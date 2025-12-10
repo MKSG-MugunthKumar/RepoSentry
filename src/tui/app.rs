@@ -15,6 +15,7 @@ use ratatui::{
     Frame,
 };
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
 
 /// Which panel has focus
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -70,12 +71,29 @@ pub struct App {
     // Exit flag
     should_exit: bool,
 
-    // Discovery available
+    // Discovery state
     discovery_ok: bool,
+    is_loading: bool,
+    discovery_receiver: Option<mpsc::Receiver<DiscoveryMessage>>,
+}
+
+/// Message sent from background discovery task
+pub enum DiscoveryMessage {
+    /// Discovery started
+    Started,
+    /// Progress update
+    Progress(String),
+    /// Discovery completed successfully
+    Completed {
+        specs: Vec<RepoSpec>,
+        states: Vec<RepoState>,
+    },
+    /// Discovery failed
+    Failed(String),
 }
 
 impl App {
-    /// Create a new application instance
+    /// Create a new application instance (fast, non-blocking)
     pub async fn new(config: Config) -> Result<Self> {
         // Note: Don't use tracing in TUI - raw mode conflicts with stdout
         // Use self.add_log() after construction for logging
@@ -83,27 +101,10 @@ impl App {
         // Create event handler
         let event_handler = EventHandler::new(Duration::from_millis(250));
 
-        // Create sync engine (provider-agnostic)
+        // Create sync engine (provider-agnostic) - fast, no I/O
         let sync_engine = SyncEngine::new(config.clone());
 
-        // Try to discover repositories using GitHub
-        let (repo_specs, repositories, discovery_ok): (Vec<RepoSpec>, Vec<RepoState>, bool) =
-            match GitHubDiscovery::new(config.clone()).await {
-                Ok(discovery) => {
-                    match discovery.discover().await {
-                        Ok(specs) => {
-                            // Analyze each repo to get RepoState
-                            let states =
-                                sync_engine.analyze_repos(&specs).await.unwrap_or_default();
-                            (specs, states, true)
-                        }
-                        Err(_) => (Vec::new(), Vec::new(), false),
-                    }
-                }
-                Err(_) => (Vec::new(), Vec::new(), false),
-            };
-
-        // Check daemon status
+        // Check daemon status - fast, just reads a file
         let daemon_running = is_daemon_running(&config).unwrap_or(false);
 
         // Initialize list state
@@ -118,27 +119,61 @@ impl App {
         let config_path = Config::default_config_path()
             .unwrap_or_else(|_| std::path::PathBuf::from("~/.config/reposentry/config.yml"));
 
-        let repo_count = repositories.len();
+        // Create channel for background discovery
+        let (tx, rx) = mpsc::channel(32);
+
+        // Spawn background discovery task
+        let discovery_config = config.clone();
+        tokio::spawn(async move {
+            let _ = tx.send(DiscoveryMessage::Started).await;
+            let _ = tx.send(DiscoveryMessage::Progress("Connecting to GitHub...".to_string())).await;
+
+            match GitHubDiscovery::new(discovery_config.clone()).await {
+                Ok(discovery) => {
+                    let _ = tx.send(DiscoveryMessage::Progress("Fetching repositories...".to_string())).await;
+
+                    match discovery.discover().await {
+                        Ok(specs) => {
+                            let _ = tx.send(DiscoveryMessage::Progress(
+                                format!("Found {} repositories, analyzing...", specs.len())
+                            )).await;
+
+                            // Analyze repos - this is also slow, do it in background
+                            let sync_engine = SyncEngine::new(discovery_config);
+                            let states = sync_engine.analyze_repos(&specs).await.unwrap_or_default();
+
+                            let _ = tx.send(DiscoveryMessage::Completed { specs, states }).await;
+                        }
+                        Err(e) => {
+                            let _ = tx.send(DiscoveryMessage::Failed(format!("Discovery failed: {}", e))).await;
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(DiscoveryMessage::Failed(format!("GitHub connection failed: {}", e))).await;
+                }
+            }
+        });
 
         Ok(Self {
             config,
             sync_engine,
-            repo_specs,
+            repo_specs: Vec::new(),
             event_handler,
             colors: ColorScheme::default(),
             focused_panel: FocusedPanel::Repositories,
             right_panel_tab: RightPanelTab::Log,
-            repositories,
+            repositories: Vec::new(),
             selected_repo: 0,
             list_state,
             daemon_running,
             last_sync: None,
             last_sync_summary: None,
-            current_operation: None,
-            status_message: "Ready".to_string(),
+            current_operation: Some("Discovering repositories...".to_string()),
+            status_message: "Loading...".to_string(),
             logs: vec![
                 "Application started".to_string(),
-                format!("Loaded {} repositories", repo_count),
+                "Discovering repositories in background...".to_string(),
             ],
             log_scroll_offset: 0,
             show_help: false,
@@ -147,7 +182,9 @@ impl App {
             config_text,
             config_path,
             should_exit: false,
-            discovery_ok,
+            discovery_ok: false,
+            is_loading: true,
+            discovery_receiver: Some(rx),
         })
     }
 
@@ -484,6 +521,59 @@ impl App {
 
     /// Process pending events
     pub async fn update(&mut self) -> Result<()> {
+        // Check for discovery messages from background task
+        if let Some(ref mut rx) = self.discovery_receiver {
+            // Non-blocking check for messages
+            match rx.try_recv() {
+                Ok(DiscoveryMessage::Started) => {
+                    self.add_log("Discovery started...".to_string());
+                }
+                Ok(DiscoveryMessage::Progress(msg)) => {
+                    self.status_message = msg.clone();
+                    self.add_log(msg);
+                }
+                Ok(DiscoveryMessage::Completed { specs, states }) => {
+                    let count = specs.len();
+                    self.repo_specs = specs;
+                    self.repositories = states;
+                    self.discovery_ok = true;
+                    self.is_loading = false;
+                    self.current_operation = None;
+                    self.status_message = "Ready".to_string();
+                    self.add_log(format!("Loaded {} repositories", count));
+
+                    // Select first repo if available
+                    if !self.repositories.is_empty() {
+                        self.list_state.select(Some(0));
+                    }
+
+                    // Clear the receiver since we're done
+                    self.discovery_receiver = None;
+                }
+                Ok(DiscoveryMessage::Failed(error)) => {
+                    self.is_loading = false;
+                    self.current_operation = None;
+                    self.status_message = "Discovery failed".to_string();
+                    self.add_log(format!("ERROR: {}", error));
+                    self.show_error = Some(error);
+
+                    // Clear the receiver
+                    self.discovery_receiver = None;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => {
+                    // No message yet, that's fine
+                }
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    // Channel closed, clear it
+                    self.discovery_receiver = None;
+                    if self.is_loading {
+                        self.is_loading = false;
+                        self.add_log("Discovery task ended unexpectedly".to_string());
+                    }
+                }
+            }
+        }
+
         // Try to get an event without blocking
         if let Ok(event) =
             tokio::time::timeout(Duration::from_millis(1), self.event_handler.next_event()).await
