@@ -78,8 +78,9 @@ impl Daemon {
             .await
             .context("Failed to create GitHub discovery for daemon")?;
 
-        // Create sync engine (now synchronous)
-        let sync_engine = SyncEngine::new(config.as_ref().clone());
+        // Create sync engine with state database for event tracking
+        let sync_engine = SyncEngine::with_state_db(config.as_ref().clone())
+            .context("Failed to create sync engine with state database")?;
 
         let (shutdown_sender, _) = broadcast::channel(1);
         let is_running = Arc::new(AtomicBool::new(false));
