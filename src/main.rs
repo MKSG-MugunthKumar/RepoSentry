@@ -6,6 +6,7 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use reposentry::config::{get_log_file_path, get_pid_file_path};
 use reposentry::daemon::is_daemon_running;
 use reposentry::github::auth_setup;
+use reposentry::state::{EventType, RepoStatus, Severity, StateDb};
 use reposentry::tui;
 use reposentry::{
     Config, Daemon, Discovery, GitHubClient, GitHubDiscovery, HealthCheck, SyncEngine,
@@ -85,6 +86,12 @@ enum Commands {
         #[arg(value_enum)]
         component: Option<DoctorComponent>,
     },
+
+    /// View sync events and repository status
+    Events {
+        #[command(subcommand)]
+        events_command: EventsCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -139,6 +146,66 @@ enum DoctorComponent {
     All,
 }
 
+#[derive(Subcommand)]
+enum EventsCommands {
+    /// Show recent sync events
+    List {
+        /// Number of events to show
+        #[arg(short = 'n', long, default_value = "20")]
+        limit: u32,
+
+        /// Show only unacknowledged events
+        #[arg(short, long)]
+        unread: bool,
+
+        /// Filter by event type (cloned, pulled, branch_switch, skipped, error)
+        #[arg(short = 't', long)]
+        event_type: Option<String>,
+    },
+
+    /// Show repository status summary
+    Status {
+        /// Show repositories with issues only
+        #[arg(short, long)]
+        issues: bool,
+
+        /// Filter by status (ok, skipped, error)
+        #[arg(short, long)]
+        filter: Option<String>,
+    },
+
+    /// Acknowledge (dismiss) events
+    Ack {
+        /// Acknowledge specific event by ID
+        #[arg(short, long)]
+        id: Option<i64>,
+
+        /// Acknowledge all events
+        #[arg(short, long)]
+        all: bool,
+    },
+
+    /// Show events for a specific repository
+    Repo {
+        /// Repository name (owner/repo format)
+        name: String,
+
+        /// Number of events to show
+        #[arg(short = 'n', long, default_value = "10")]
+        limit: u32,
+    },
+
+    /// Show event statistics
+    Stats,
+
+    /// Clean up old events
+    Cleanup {
+        /// Delete events older than N days
+        #[arg(short, long, default_value = "30")]
+        days: u32,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -170,6 +237,7 @@ async fn main() -> Result<()> {
         Some(Commands::List { details, org }) => cmd_list(details, org, &config).await,
         Some(Commands::Daemon { daemon_command }) => cmd_daemon(daemon_command, &config).await,
         Some(Commands::Doctor { component }) => cmd_doctor(component, &config).await,
+        Some(Commands::Events { events_command }) => cmd_events(events_command).await,
     }
 }
 
@@ -635,4 +703,228 @@ fn print_health_report(health: &HealthCheck) {
     } else {
         println!("❌ Some checks failed");
     }
+}
+
+/// Handle events commands for viewing sync events and repository status
+async fn cmd_events(events_command: EventsCommands) -> Result<()> {
+    let db = StateDb::open()?;
+
+    match events_command {
+        EventsCommands::List {
+            limit,
+            unread,
+            event_type,
+        } => {
+            let event_type_filter = event_type.as_ref().and_then(|s| EventType::parse(s));
+            let acknowledged_filter = if unread { Some(false) } else { None };
+
+            let events =
+                db.get_events_with_filter(acknowledged_filter, event_type_filter, Some(limit))?;
+
+            if events.is_empty() {
+                println!("📭 No events found");
+                return Ok(());
+            }
+
+            println!("📋 Recent Sync Events ({})", events.len());
+            println!();
+
+            for event in events {
+                let icon = match event.severity {
+                    Severity::Info => "ℹ️ ",
+                    Severity::Warning => "⚠️ ",
+                    Severity::Error => "❌",
+                };
+                let ack_icon = if event.acknowledged { " " } else { "●" };
+
+                println!(
+                    "{} {} [{}] {}",
+                    ack_icon,
+                    icon,
+                    event.timestamp.format("%Y-%m-%d %H:%M"),
+                    event.summary
+                );
+                if let Some(repo) = &event.repo_full_name {
+                    println!("      Repo: {}", repo);
+                }
+                if let Some(details) = &event.details {
+                    // Truncate details if too long
+                    let truncated = if details.len() > 100 {
+                        format!("{}...", &details[..100])
+                    } else {
+                        details.clone()
+                    };
+                    println!("      Details: {}", truncated);
+                }
+                println!("      ID: {}", event.id);
+                println!();
+            }
+        }
+
+        EventsCommands::Status { issues, filter } => {
+            if issues {
+                let repos = db.get_repos_with_issues()?;
+
+                if repos.is_empty() {
+                    println!("✅ No repositories with issues");
+                    return Ok(());
+                }
+
+                println!("⚠️  Repositories with Issues ({})", repos.len());
+                println!();
+
+                for repo in repos {
+                    let status_icon = match repo.last_sync_status {
+                        RepoStatus::Ok => "✅",
+                        RepoStatus::Skipped => "⏭️ ",
+                        RepoStatus::Error => "❌",
+                        RepoStatus::Unknown => "❓",
+                    };
+
+                    println!("{} {}", status_icon, repo.full_name);
+                    if let Some(reason) = &repo.skip_reason {
+                        println!("   Reason: {}", reason);
+                    }
+                    if let Some(branch) = &repo.current_branch {
+                        println!("   Branch: {}", branch);
+                    }
+                    if let Some(last_sync) = repo.last_sync_at {
+                        println!("   Last sync: {}", last_sync.format("%Y-%m-%d %H:%M"));
+                    }
+                    println!();
+                }
+            } else if let Some(status_filter) = filter {
+                let status = RepoStatus::parse(&status_filter);
+                let repos = db.get_repos_by_status(status)?;
+
+                println!("📊 Repositories with status '{}' ({})", status_filter, repos.len());
+                println!();
+
+                for repo in repos {
+                    println!("  {}", repo.full_name);
+                    if let Some(branch) = &repo.current_branch {
+                        println!("     Branch: {}", branch);
+                    }
+                }
+            } else {
+                // Show overall status summary
+                let (info, warning, error) = db.get_unacknowledged_counts()?;
+                let ok_repos = db.get_repos_by_status(RepoStatus::Ok)?;
+                let skipped_repos = db.get_repos_by_status(RepoStatus::Skipped)?;
+                let error_repos = db.get_repos_by_status(RepoStatus::Error)?;
+
+                println!("📊 Repository Status Summary");
+                println!();
+                println!("   Repositories:");
+                println!("      ✅ OK: {}", ok_repos.len());
+                println!("      ⏭️  Skipped: {}", skipped_repos.len());
+                println!("      ❌ Error: {}", error_repos.len());
+                println!();
+                println!("   Unacknowledged Events:");
+                println!("      ℹ️  Info: {}", info);
+                println!("      ⚠️  Warning: {}", warning);
+                println!("      ❌ Error: {}", error);
+
+                if warning > 0 || error > 0 {
+                    println!();
+                    println!("💡 Run 'reposentry events list --unread' to see unacknowledged events");
+                }
+            }
+        }
+
+        EventsCommands::Ack { id, all } => {
+            if all {
+                let count = db.acknowledge_all_events()?;
+                println!("✅ Acknowledged {} events", count);
+            } else if let Some(event_id) = id {
+                db.acknowledge_event(event_id)?;
+                println!("✅ Acknowledged event {}", event_id);
+            } else {
+                println!("⚠️  Please specify --id <EVENT_ID> or --all");
+                println!("   Use 'reposentry events list' to see event IDs");
+            }
+        }
+
+        EventsCommands::Repo { name, limit } => {
+            let events = db.get_events_for_repo(&name, Some(limit))?;
+
+            if events.is_empty() {
+                println!("📭 No events found for {}", name);
+                return Ok(());
+            }
+
+            println!("📋 Events for {} ({})", name, events.len());
+            println!();
+
+            for event in events {
+                let icon = match event.severity {
+                    Severity::Info => "ℹ️ ",
+                    Severity::Warning => "⚠️ ",
+                    Severity::Error => "❌",
+                };
+
+                println!(
+                    "{} [{}] {}",
+                    icon,
+                    event.timestamp.format("%Y-%m-%d %H:%M"),
+                    event.summary
+                );
+            }
+        }
+
+        EventsCommands::Stats => {
+            let (info, warning, error) = db.get_unacknowledged_counts()?;
+            let total_unack = info + warning + error;
+
+            // Get all events for total count
+            let all_events = db.get_events_with_filter(None, None, None)?;
+
+            println!("📈 Event Statistics");
+            println!();
+            println!("   Total events: {}", all_events.len());
+            println!("   Unacknowledged: {}", total_unack);
+            println!();
+            println!("   By severity (unacknowledged):");
+            println!("      ℹ️  Info: {}", info);
+            println!("      ⚠️  Warning: {}", warning);
+            println!("      ❌ Error: {}", error);
+            println!();
+
+            // Count by event type
+            let mut cloned = 0;
+            let mut pulled = 0;
+            let mut branch_switch = 0;
+            let mut skipped = 0;
+            let mut errors = 0;
+
+            for event in &all_events {
+                match event.event_type {
+                    EventType::Cloned => cloned += 1,
+                    EventType::Pulled => pulled += 1,
+                    EventType::BranchSwitch => branch_switch += 1,
+                    EventType::SkippedLocalChanges
+                    | EventType::SkippedConflicts
+                    | EventType::SkippedAheadOfRemote => skipped += 1,
+                    EventType::SyncError => errors += 1,
+                }
+            }
+
+            println!("   By type (all time):");
+            println!("      📥 Cloned: {}", cloned);
+            println!("      🔄 Pulled: {}", pulled);
+            println!("      ↻  Branch switches: {}", branch_switch);
+            println!("      ⏭️  Skipped: {}", skipped);
+            println!("      ❌ Errors: {}", errors);
+        }
+
+        EventsCommands::Cleanup { days } => {
+            let count = db.cleanup_old_events(days)?;
+            println!(
+                "🧹 Cleaned up {} acknowledged events older than {} days",
+                count, days
+            );
+        }
+    }
+
+    Ok(())
 }
