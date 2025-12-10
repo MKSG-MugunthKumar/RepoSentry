@@ -7,17 +7,11 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{
-        Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph,
-        Tabs, Wrap,
-    },
+    widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Tabs, Wrap},
     Frame,
 };
 
-use crate::{
-    git::RepoState,
-    sync::SyncSummary,
-};
+use crate::{git::RepoState, sync::SyncSummary};
 
 /// Color scheme for the TUI
 pub struct ColorScheme {
@@ -97,13 +91,12 @@ impl<'a> RepositoryList<'a> {
                 let content = Line::from(vec![
                     Span::styled(
                         format!("{} ", status_icon),
-                        Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(status_color)
+                            .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(path_str, Style::default().fg(self.colors.text)),
-                    Span::styled(
-                        branch_info,
-                        Style::default().fg(self.colors.secondary),
-                    ),
+                    Span::styled(branch_info, Style::default().fg(self.colors.secondary)),
                 ]);
 
                 ListItem::new(content)
@@ -397,11 +390,7 @@ impl<'a> TabBar<'a> {
 
     /// Render the tab bar widget
     pub fn render(&self, frame: &mut Frame, area: Rect) {
-        let titles: Vec<Line> = self
-            .tabs
-            .iter()
-            .map(|&t| Line::from(t))
-            .collect();
+        let titles: Vec<Line> = self.tabs.iter().map(|&t| Line::from(t)).collect();
 
         let tabs = Tabs::new(titles)
             .block(

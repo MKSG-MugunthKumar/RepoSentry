@@ -595,7 +595,10 @@ mod tests {
 
         assert_eq!(loaded_config.base_directory, "/custom/path");
         assert_eq!(loaded_config.github.username, Some("testuser".to_string()));
-        assert_eq!(loaded_config.filters.age.max_age, Some("1month".to_string()));
+        assert_eq!(
+            loaded_config.filters.age.max_age,
+            Some("1month".to_string())
+        );
         assert_eq!(loaded_config.sync.max_parallel, 8);
     }
 

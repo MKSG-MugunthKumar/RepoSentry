@@ -161,10 +161,7 @@ impl HealthCheck {
                     )
                 }
             }
-            Err(e) => CheckResult::error_with_details(
-                "Invalid base directory path",
-                e.to_string(),
-            ),
+            Err(e) => CheckResult::error_with_details("Invalid base directory path", e.to_string()),
         }
     }
 
@@ -182,7 +179,7 @@ impl HealthCheck {
         let found_keys: Vec<_> = ssh_keys
             .iter()
             .filter(|key| ssh_dir.join(key).exists())
-            .map(|s| *s)
+            .copied()
             .collect();
 
         if found_keys.is_empty() {

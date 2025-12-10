@@ -7,7 +7,9 @@ use reposentry::config::{get_log_file_path, get_pid_file_path};
 use reposentry::daemon::is_daemon_running;
 use reposentry::github::auth_setup;
 use reposentry::tui;
-use reposentry::{Config, Daemon, Discovery, GitHubClient, GitHubDiscovery, HealthCheck, SyncEngine};
+use reposentry::{
+    Config, Daemon, Discovery, GitHubClient, GitHubDiscovery, HealthCheck, SyncEngine,
+};
 
 #[derive(Parser)]
 #[command(name = "reposentry")]
@@ -439,8 +441,14 @@ async fn cmd_daemon(daemon_command: DaemonCommands, config: &Config) -> Result<(
                 {
                     daemon.daemonize()?;
                     println!("✅ Daemon started in background");
-                    println!("   PID file: {}", get_pid_file_path(&config.daemon.pid_file));
-                    println!("   Log file: {}", get_log_file_path(&config.daemon.log_file));
+                    println!(
+                        "   PID file: {}",
+                        get_pid_file_path(&config.daemon.pid_file)
+                    );
+                    println!(
+                        "   Log file: {}",
+                        get_log_file_path(&config.daemon.log_file)
+                    );
                     println!("   Sync interval: {}", config.daemon.interval);
                 }
 
@@ -598,7 +606,11 @@ fn print_health_report(health: &HealthCheck) {
     fn print_check(name: &str, result: &CheckResult) {
         println!("{}:", name);
         let icon = if result.passed {
-            if result.is_warning { "⚠️ " } else { "✅" }
+            if result.is_warning {
+                "⚠️ "
+            } else {
+                "✅"
+            }
         } else {
             "❌"
         };

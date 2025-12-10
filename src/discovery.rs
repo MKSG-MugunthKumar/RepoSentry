@@ -8,18 +8,13 @@ use async_trait::async_trait;
 use std::path::PathBuf;
 
 /// Clone method preference for a repository
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum CloneMethod {
     /// Use SSH (git@github.com:user/repo.git)
+    #[default]
     Ssh,
     /// Use HTTPS (https://github.com/user/repo.git)
     Https,
-}
-
-impl Default for CloneMethod {
-    fn default() -> Self {
-        Self::Ssh
-    }
 }
 
 /// Provider-agnostic repository specification
@@ -100,7 +95,9 @@ pub struct MultiDiscovery {
 
 impl MultiDiscovery {
     pub fn new() -> Self {
-        Self { sources: Vec::new() }
+        Self {
+            sources: Vec::new(),
+        }
     }
 
     pub fn add_source(&mut self, source: Box<dyn Discovery>) {
@@ -123,11 +120,7 @@ impl MultiDiscovery {
                         all_repos.extend(repos);
                     }
                     Err(e) => {
-                        tracing::warn!(
-                            "Failed to discover from {}: {}",
-                            source.provider_name(),
-                            e
-                        );
+                        tracing::warn!("Failed to discover from {}: {}", source.provider_name(), e);
                     }
                 }
             }
@@ -187,7 +180,9 @@ impl GitHubDiscovery {
             .unwrap_or_else(|_| std::borrow::Cow::Borrowed(&self.config.base_directory));
 
         let local_path = if self.config.organization.separate_org_dirs {
-            PathBuf::from(base_dir.as_ref()).join(&owner).join(&repo.name)
+            PathBuf::from(base_dir.as_ref())
+                .join(&owner)
+                .join(&repo.name)
         } else {
             PathBuf::from(base_dir.as_ref()).join(&repo.name)
         };

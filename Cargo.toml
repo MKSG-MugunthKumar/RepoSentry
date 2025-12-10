@@ -28,6 +28,7 @@ clap = { version = "4.4", features = ["derive"] }
 # Configuration and serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
+serde_json = "1.0"
 
 # Error handling
 anyhow = "1.0"
@@ -54,6 +55,9 @@ shellexpand = "3.1"
 
 # File timestamp modification
 filetime = "0.2"
+
+# SQLite for state/event tracking
+rusqlite = { version = "0.31", features = ["bundled"] }
 
 # Date/time handling for repository age filtering
 chrono = { version = "0.4", features = ["serde"] }

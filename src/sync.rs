@@ -210,9 +210,9 @@ impl SyncEngine {
             / repos.len().max(1) as f64;
 
         let size_factor = match avg_size {
-            s if s > 50_000_000.0 => 0.5,  // Large repos: reduce concurrency (50MB+)
+            s if s > 50_000_000.0 => 0.5, // Large repos: reduce concurrency (50MB+)
             s if s > 10_000_000.0 => 0.75, // Medium repos: slight reduction (10MB+)
-            _ => 1.0,                       // Small repos: full concurrency
+            _ => 1.0,                     // Small repos: full concurrency
         };
 
         // 2. Repository count-based scaling
@@ -248,7 +248,6 @@ impl SyncEngine {
         &self.git_client
     }
 }
-
 
 #[cfg(test)]
 mod tests {

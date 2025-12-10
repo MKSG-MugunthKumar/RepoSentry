@@ -573,7 +573,7 @@ impl GitClient {
         const MIN_TIMESTAMP: i64 = 1104537600; // 2005-01-01
         const MAX_TIMESTAMP: i64 = 2524608000; // 2050-01-01
 
-        if timestamp < MIN_TIMESTAMP || timestamp > MAX_TIMESTAMP {
+        if !(MIN_TIMESTAMP..=MAX_TIMESTAMP).contains(&timestamp) {
             return Err(anyhow!(
                 "Commit timestamp {} is outside valid range",
                 timestamp
@@ -678,7 +678,7 @@ impl GitClient {
                     reason: "Fetch-only strategy configured".to_string(),
                 })
             }
-            "safe-pull" | _ => self.git_pull(target_path).await,
+            _ => self.git_pull(target_path).await,
         }
     }
 
@@ -743,7 +743,8 @@ impl GitClient {
 
     /// Analyze repository state using RepoSpec
     pub async fn analyze_from_spec(&self, spec: &crate::discovery::RepoSpec) -> Result<RepoState> {
-        self.analyze_repo_state(&spec.local_path, &spec.clone_url).await
+        self.analyze_repo_state(&spec.local_path, &spec.clone_url)
+            .await
     }
 }
 

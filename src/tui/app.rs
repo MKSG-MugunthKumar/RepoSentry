@@ -93,10 +93,8 @@ impl App {
                     match discovery.discover().await {
                         Ok(specs) => {
                             // Analyze each repo to get RepoState
-                            let states = sync_engine
-                                .analyze_repos(&specs)
-                                .await
-                                .unwrap_or_default();
+                            let states =
+                                sync_engine.analyze_repos(&specs).await.unwrap_or_default();
                             (specs, states, true)
                         }
                         Err(_) => (Vec::new(), Vec::new(), false),
@@ -117,9 +115,8 @@ impl App {
             .unwrap_or_else(|_| "Failed to serialize config".to_string());
 
         // Get config path
-        let config_path = Config::default_config_path().unwrap_or_else(|_| {
-            std::path::PathBuf::from("~/.config/reposentry/config.yml")
-        });
+        let config_path = Config::default_config_path()
+            .unwrap_or_else(|_| std::path::PathBuf::from("~/.config/reposentry/config.yml"));
 
         let repo_count = repositories.len();
 
@@ -253,10 +250,10 @@ impl App {
                 }
             }
             FocusedPanel::RightPanel => {
-                if self.right_panel_tab == RightPanelTab::Log {
-                    if self.log_scroll_offset < self.logs.len().saturating_sub(1) {
-                        self.log_scroll_offset += 1;
-                    }
+                if self.right_panel_tab == RightPanelTab::Log
+                    && self.log_scroll_offset < self.logs.len().saturating_sub(1)
+                {
+                    self.log_scroll_offset += 1;
                 }
             }
         }
@@ -264,15 +261,17 @@ impl App {
 
     /// Handle select/enter action
     async fn handle_select(&mut self) -> Result<()> {
-        if self.focused_panel == FocusedPanel::Repositories {
-            if self.selected_repo < self.repositories.len() {
-                let repo = &self.repositories[self.selected_repo];
-                let name = repo.path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown");
-                self.add_log(format!("Selected: {}", name));
-                // TODO: Show repo details or trigger sync for this repo
-            }
+        if self.focused_panel == FocusedPanel::Repositories
+            && self.selected_repo < self.repositories.len()
+        {
+            let repo = &self.repositories[self.selected_repo];
+            let name = repo
+                .path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown");
+            self.add_log(format!("Selected: {}", name));
+            // TODO: Show repo details or trigger sync for this repo
         }
         Ok(())
     }
@@ -287,10 +286,7 @@ impl App {
         // We need to restore terminal before launching editor
         // This is handled by temporarily exiting raw mode
         crossterm::terminal::disable_raw_mode()?;
-        crossterm::execute!(
-            std::io::stdout(),
-            crossterm::terminal::LeaveAlternateScreen
-        )?;
+        crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
 
         // Launch editor
         let status = std::process::Command::new(&editor)
@@ -299,10 +295,7 @@ impl App {
 
         // Restore terminal
         crossterm::terminal::enable_raw_mode()?;
-        crossterm::execute!(
-            std::io::stdout(),
-            crossterm::terminal::EnterAlternateScreen
-        )?;
+        crossterm::execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
 
         match status {
             Ok(exit_status) => {
@@ -334,29 +327,27 @@ impl App {
         // Re-discover and analyze repositories
         if self.discovery_ok {
             match GitHubDiscovery::new(self.config.clone()).await {
-                Ok(discovery) => {
-                    match discovery.discover().await {
-                        Ok(specs) => {
-                            self.repo_specs = specs;
-                            match self.sync_engine.analyze_repos(&self.repo_specs).await {
-                                Ok(states) => {
-                                    self.repositories = states;
-                                    self.add_log(format!(
-                                        "Loaded {} repositories",
-                                        self.repositories.len()
-                                    ));
-                                }
-                                Err(e) => {
-                                    self.add_log(format!("ERROR: Failed to analyze repos: {}", e));
-                                }
+                Ok(discovery) => match discovery.discover().await {
+                    Ok(specs) => {
+                        self.repo_specs = specs;
+                        match self.sync_engine.analyze_repos(&self.repo_specs).await {
+                            Ok(states) => {
+                                self.repositories = states;
+                                self.add_log(format!(
+                                    "Loaded {} repositories",
+                                    self.repositories.len()
+                                ));
+                            }
+                            Err(e) => {
+                                self.add_log(format!("ERROR: Failed to analyze repos: {}", e));
                             }
                         }
-                        Err(e) => {
-                            self.add_log(format!("ERROR: Failed to discover repos: {}", e));
-                            self.show_error = Some(format!("Failed to discover repos: {}", e));
-                        }
                     }
-                }
+                    Err(e) => {
+                        self.add_log(format!("ERROR: Failed to discover repos: {}", e));
+                        self.show_error = Some(format!("Failed to discover repos: {}", e));
+                    }
+                },
                 Err(e) => {
                     self.add_log(format!("ERROR: Failed to refresh repositories: {}", e));
                     self.show_error = Some(format!("Failed to refresh repositories: {}", e));
@@ -393,7 +384,9 @@ impl App {
 
         // Spawn sync operation in background
         tokio::spawn(async move {
-            let _ = sender.send(AppEvent::StatusUpdate("Discovering repository states...".to_string()));
+            let _ = sender.send(AppEvent::StatusUpdate(
+                "Discovering repository states...".to_string(),
+            ));
 
             match sync_engine.sync_repos(specs_to_sync).await {
                 Ok(summary) => {
@@ -404,7 +397,10 @@ impl App {
                                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
                                 format!("✓ Cloned: {}", name)
                             }
-                            SyncResult::Pulled { path, commits_updated } => {
+                            SyncResult::Pulled {
+                                path,
+                                commits_updated,
+                            } => {
                                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
                                 format!("✓ Pulled: {} ({} commits)", name, commits_updated)
                             }
@@ -488,8 +484,7 @@ impl App {
                     self.last_sync = Some(Instant::now());
                     self.status_message = format!(
                         "Sync completed: {} ok, {} failed",
-                        summary.successful_operations,
-                        summary.failed_operations
+                        summary.successful_operations, summary.failed_operations
                     );
                     self.last_sync_summary = Some(summary);
                     self.current_operation = None;
@@ -517,8 +512,8 @@ impl App {
 
     /// Draw the application UI
     pub fn draw(&mut self, frame: &mut Frame) {
+        use ratatui::style::{Modifier, Style};
         use ratatui::widgets::Tabs;
-        use ratatui::style::{Style, Modifier};
 
         let size = frame.size();
 
@@ -526,18 +521,15 @@ impl App {
         let vertical_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(0),      // Main content
-                Constraint::Length(1),   // Status line (full width)
+                Constraint::Min(0),    // Main content
+                Constraint::Length(1), // Status line (full width)
             ])
             .split(size);
 
         // Main content: 70% repos, 30% right panel
         let main_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(70),
-                Constraint::Percentage(30),
-            ])
+            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
             .split(vertical_chunks[0]);
 
         // Draw repositories panel
@@ -555,8 +547,8 @@ impl App {
         let right_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),   // Tab selector
-                Constraint::Min(0),      // Content
+                Constraint::Length(1), // Tab selector
+                Constraint::Min(0),    // Content
             ])
             .split(main_chunks[1]);
 
@@ -569,7 +561,11 @@ impl App {
         let tabs = Tabs::new(tab_titles)
             .select(selected_tab)
             .style(Style::default().fg(self.colors.text))
-            .highlight_style(Style::default().fg(self.colors.primary).add_modifier(Modifier::BOLD));
+            .highlight_style(
+                Style::default()
+                    .fg(self.colors.primary)
+                    .add_modifier(Modifier::BOLD),
+            );
         frame.render_widget(tabs, right_chunks[0]);
 
         // Draw right panel content
@@ -581,7 +577,9 @@ impl App {
 
         match self.right_panel_tab {
             RightPanelTab::Log => self.draw_log_panel(frame, right_chunks[1], right_border_color),
-            RightPanelTab::Config => self.draw_config_panel(frame, right_chunks[1], right_border_color),
+            RightPanelTab::Config => {
+                self.draw_config_panel(frame, right_chunks[1], right_border_color)
+            }
         }
 
         // Draw popups
@@ -590,28 +588,29 @@ impl App {
         }
 
         if let Some(ref error) = self.show_error.clone() {
-            self.draw_error_popup(frame, size, &error);
+            self.draw_error_popup(frame, size, error);
         }
 
         if self.show_progress {
             let operation = self.current_operation.as_deref().unwrap_or("Processing...");
-            let progress_dialog = ProgressDialog::new(
-                "Working",
-                operation,
-                None,
-                &self.colors,
-            );
+            let progress_dialog = ProgressDialog::new("Working", operation, None, &self.colors);
             progress_dialog.render(frame, size);
         }
     }
 
     /// Draw repositories panel
-    fn draw_repositories_panel(&mut self, frame: &mut Frame, area: Rect, border_color: ratatui::style::Color) {
-        use ratatui::widgets::{Block, Borders, List, ListItem};
-        use ratatui::text::{Line, Span};
+    fn draw_repositories_panel(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        border_color: ratatui::style::Color,
+    ) {
         use ratatui::style::Style;
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::{Block, Borders, List, ListItem};
 
-        let items: Vec<ListItem> = self.repositories
+        let items: Vec<ListItem> = self
+            .repositories
             .iter()
             .map(|repo| {
                 let (status_icon, status_color) = if !repo.exists {
@@ -628,18 +627,26 @@ impl App {
                     ("✓", self.colors.success)
                 };
 
-                let name = repo.path.file_name()
+                let name = repo
+                    .path
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown");
 
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("{} ", status_icon), Style::default().fg(status_color)),
+                    Span::styled(
+                        format!("{} ", status_icon),
+                        Style::default().fg(status_color),
+                    ),
                     Span::styled(name, Style::default().fg(self.colors.text)),
                 ]))
             })
             .collect();
 
-        let title = format!("Repositories ({}) [r]efresh [s]ync", self.repositories.len());
+        let title = format!(
+            "Repositories ({}) [r]efresh [s]ync",
+            self.repositories.len()
+        );
         let list = List::new(items)
             .block(
                 Block::default()
@@ -654,11 +661,11 @@ impl App {
 
     /// Draw status line
     fn draw_status_line(&self, frame: &mut Frame, area: Rect) {
-        use ratatui::widgets::Paragraph;
         use ratatui::style::Style;
+        use ratatui::widgets::Paragraph;
 
         let daemon_status = if self.daemon_running { "●" } else { "○" };
-        let sync_status = if let Some(_) = self.last_sync {
+        let sync_status = if self.last_sync.is_some() {
             "synced"
         } else {
             "no sync"
@@ -666,25 +673,28 @@ impl App {
 
         let status_text = format!(
             " {} Daemon | {} | {} ",
-            daemon_status,
-            self.status_message,
-            sync_status
+            daemon_status, self.status_message, sync_status
         );
 
-        let paragraph = Paragraph::new(status_text)
-            .style(Style::default().fg(self.colors.secondary).bg(self.colors.background));
+        let paragraph = Paragraph::new(status_text).style(
+            Style::default()
+                .fg(self.colors.secondary)
+                .bg(self.colors.background),
+        );
 
         frame.render_widget(paragraph, area);
     }
 
     /// Draw log panel
     fn draw_log_panel(&self, frame: &mut Frame, area: Rect, border_color: ratatui::style::Color) {
-        use ratatui::widgets::{Block, Borders, List, ListItem};
-        use ratatui::text::{Line, Span};
         use ratatui::style::Style;
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::{Block, Borders, List, ListItem};
 
         let visible_height = area.height.saturating_sub(2) as usize;
-        let start_idx = self.log_scroll_offset.min(self.logs.len().saturating_sub(1));
+        let start_idx = self
+            .log_scroll_offset
+            .min(self.logs.len().saturating_sub(1));
         let end_idx = (start_idx + visible_height).min(self.logs.len());
 
         let visible_logs = if start_idx < self.logs.len() {
@@ -703,13 +713,20 @@ impl App {
                 } else {
                     self.colors.text
                 };
-                ListItem::new(Line::from(Span::styled(log.as_str(), Style::default().fg(color))))
+                ListItem::new(Line::from(Span::styled(
+                    log.as_str(),
+                    Style::default().fg(color),
+                )))
             })
             .collect();
 
         let list = List::new(items).block(
             Block::default()
-                .title(format!("Log ({}/{})", self.log_scroll_offset + 1, self.logs.len()))
+                .title(format!(
+                    "Log ({}/{})",
+                    self.log_scroll_offset + 1,
+                    self.logs.len()
+                ))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(border_color)),
         );
@@ -718,10 +735,15 @@ impl App {
     }
 
     /// Draw config panel
-    fn draw_config_panel(&self, frame: &mut Frame, area: Rect, border_color: ratatui::style::Color) {
-        use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-        use ratatui::text::Text;
+    fn draw_config_panel(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        border_color: ratatui::style::Color,
+    ) {
         use ratatui::style::Style;
+        use ratatui::text::Text;
+        use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
         let paragraph = Paragraph::new(Text::from(self.config_text.as_str()))
             .block(
@@ -738,8 +760,8 @@ impl App {
 
     /// Draw help popup
     fn draw_help_popup(&self, frame: &mut Frame, area: Rect) {
-        use ratatui::widgets::{Block, Borders, Paragraph, Clear};
         use ratatui::style::Style;
+        use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
         let help_text = r#"Keybindings:
   q        Quit
@@ -773,8 +795,8 @@ impl App {
 
     /// Draw error popup
     fn draw_error_popup(&self, frame: &mut Frame, area: Rect, error: &str) {
-        use ratatui::widgets::{Block, Borders, Paragraph, Clear, Wrap};
         use ratatui::style::Style;
+        use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
         let popup_area = centered_rect(60, 30, area);
         frame.render_widget(Clear, popup_area);

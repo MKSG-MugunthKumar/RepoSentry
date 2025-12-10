@@ -151,8 +151,8 @@ impl Daemon {
                 if let Some(parent) = path.parent() {
                     fs::create_dir_all(parent).context("Failed to create log directory")?;
                 }
-                let file = std::fs::File::create(&resolved_path)
-                    .context("Failed to create log file")?;
+                let file =
+                    std::fs::File::create(&resolved_path).context("Failed to create log file")?;
                 Some(file)
             }
         };

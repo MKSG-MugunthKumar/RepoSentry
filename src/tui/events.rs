@@ -225,8 +225,14 @@ mod tests {
         assert!(!key_handler::matches_simple_key(&event, KeyCode::Char('r')));
 
         let ctrl_event = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        assert!(key_handler::matches_ctrl_key(&ctrl_event, KeyCode::Char('c')));
-        assert!(!key_handler::matches_simple_key(&ctrl_event, KeyCode::Char('c')));
+        assert!(key_handler::matches_ctrl_key(
+            &ctrl_event,
+            KeyCode::Char('c')
+        ));
+        assert!(!key_handler::matches_simple_key(
+            &ctrl_event,
+            KeyCode::Char('c')
+        ));
     }
 
     #[test]
