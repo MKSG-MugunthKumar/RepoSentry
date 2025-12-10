@@ -30,13 +30,30 @@ pub struct RepoState {
 #[derive(Debug, Clone)]
 pub enum SyncResult {
     /// Repository was successfully cloned
-    Cloned { path: PathBuf },
+    Cloned {
+        path: PathBuf,
+        branch: Option<String>,
+    },
     /// Repository was successfully pulled
-    Pulled { path: PathBuf, commits_updated: u32 },
+    Pulled {
+        path: PathBuf,
+        commits_updated: u32,
+        branch: Option<String>,
+    },
+    /// Branch was switched to a more recent one before pull
+    BranchSwitched {
+        path: PathBuf,
+        from_branch: String,
+        to_branch: String,
+        commits_updated: u32,
+    },
     /// Repository was fetched but not pulled due to conflicts
     FetchedOnly { path: PathBuf, reason: String },
     /// Repository was already up to date
-    UpToDate { path: PathBuf },
+    UpToDate {
+        path: PathBuf,
+        branch: Option<String>,
+    },
     /// Repository was skipped due to configuration or errors
     Skipped { path: PathBuf, reason: String },
     /// Operation failed with error
@@ -219,7 +236,11 @@ impl GitClient {
         }
 
         info!("Successfully cloned: {}", full_name);
-        Ok(SyncResult::Cloned { path: target_path })
+        let branch = self.get_current_branch(&target_path).await.ok().flatten();
+        Ok(SyncResult::Cloned {
+            path: target_path,
+            branch,
+        })
     }
 
     /// Synchronize an existing repository
@@ -508,14 +529,17 @@ impl GitClient {
             }
         }
 
+        let branch = self.get_current_branch(path).await.ok().flatten();
         info!(
-            "Successfully pulled {} commits in {}",
+            "Successfully pulled {} commits in {} (branch: {:?})",
             commits_updated,
-            path.display()
+            path.display(),
+            branch
         );
         Ok(SyncResult::Pulled {
             path: path.to_path_buf(),
             commits_updated,
+            branch,
         })
     }
 
@@ -779,6 +803,13 @@ impl GitClient {
     ///
     /// This method uses the pre-computed local_path and clone_url from RepoSpec,
     /// making it work with any git hosting provider.
+    ///
+    /// When the "most-recent" branch strategy is enabled, this will:
+    /// 1. Check for local changes (skip if any)
+    /// 2. Fetch all remote branches
+    /// 3. Determine the most recently updated branch
+    /// 4. Switch to that branch if different from current
+    /// 5. Pull the latest changes
     pub async fn sync_from_spec(&self, spec: &crate::discovery::RepoSpec) -> Result<SyncResult> {
         let target_path = &spec.local_path;
 
@@ -792,24 +823,20 @@ impl GitClient {
             target_path.display()
         );
 
-        // Analyze current state
+        // CRITICAL: Check for local changes FIRST - if any exist, skip entirely
+        // This is the "Dropbox for Git" safety rule: never lose user data
+        if self.has_any_local_changes(target_path).await? {
+            return Ok(SyncResult::Skipped {
+                path: target_path.clone(),
+                reason: "Repository has local changes (uncommitted or untracked files)".to_string(),
+            });
+        }
+
+        // Analyze current state for conflicts
         let state = self
             .analyze_repo_state(target_path, &spec.clone_url)
             .await
             .context("Failed to analyze repository state")?;
-
-        // Decide sync strategy based on state
-        if state.has_uncommitted_changes || state.has_untracked_files {
-            if self.config.sync.auto_stash {
-                info!("Auto-stashing changes before sync");
-                self.git_stash(target_path).await?;
-            } else {
-                return Ok(SyncResult::Skipped {
-                    path: target_path.clone(),
-                    reason: "Uncommitted changes detected".to_string(),
-                });
-            }
-        }
 
         if state.has_conflicts {
             warn!(
@@ -823,17 +850,82 @@ impl GitClient {
             });
         }
 
-        // Perform the sync based on strategy
-        match self.config.sync.strategy.as_str() {
-            "fetch-only" => {
-                self.git_fetch(target_path).await?;
-                Ok(SyncResult::FetchedOnly {
-                    path: target_path.clone(),
-                    reason: "Fetch-only strategy configured".to_string(),
-                })
-            }
-            _ => self.git_pull(target_path).await,
+        // Handle fetch-only strategy
+        if self.config.sync.strategy == "fetch-only" {
+            self.git_fetch(target_path).await?;
+            return Ok(SyncResult::FetchedOnly {
+                path: target_path.clone(),
+                reason: "Fetch-only strategy configured".to_string(),
+            });
         }
+
+        // Check if we should use the most-recent branch strategy
+        if self.config.branches.is_most_recent_strategy() {
+            return self.sync_with_most_recent_branch(target_path).await;
+        }
+
+        // Default: just pull the current branch
+        self.git_pull(target_path).await
+    }
+
+    /// Sync using the "most-recent" branch strategy
+    ///
+    /// This fetches all branches, finds the one with the most recent commit,
+    /// switches to it if necessary, and pulls.
+    async fn sync_with_most_recent_branch(&self, path: &Path) -> Result<SyncResult> {
+        // Fetch all branches to get latest refs
+        self.fetch_all_branches(path).await?;
+
+        // Get current branch
+        let current_branch = self
+            .get_current_branch(path)
+            .await?
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Find the most recently updated branch
+        let most_recent_branch = self.get_most_recent_branch(path).await?;
+
+        let target_branch = match most_recent_branch {
+            Some(branch) => branch,
+            None => {
+                // No branches found, just pull current
+                return self.git_pull(path).await;
+            }
+        };
+
+        // Check if we need to switch branches
+        if current_branch != target_branch {
+            info!(
+                "Switching from '{}' to '{}' (most recent activity) in {}",
+                current_branch,
+                target_branch,
+                path.display()
+            );
+
+            // Switch to the target branch
+            self.checkout_branch(path, &target_branch).await?;
+
+            // Pull the new branch
+            let pull_result = self.git_pull(path).await?;
+
+            // Return BranchSwitched result with pull info
+            let commits_updated = match &pull_result {
+                SyncResult::Pulled {
+                    commits_updated, ..
+                } => *commits_updated,
+                _ => 0,
+            };
+
+            return Ok(SyncResult::BranchSwitched {
+                path: path.to_path_buf(),
+                from_branch: current_branch,
+                to_branch: target_branch,
+                commits_updated,
+            });
+        }
+
+        // No branch switch needed, just pull
+        self.git_pull(path).await
     }
 
     /// Clone a repository using RepoSpec (provider-agnostic)
@@ -890,8 +982,29 @@ impl GitClient {
             }
         }
 
+        // If most-recent strategy is enabled, switch to the most active branch after clone
+        let branch = if self.config.branches.is_most_recent_strategy() {
+            self.fetch_all_branches(target_path).await?;
+            if let Some(most_recent) = self.get_most_recent_branch(target_path).await? {
+                let current = self.get_current_branch(target_path).await?.unwrap_or_default();
+                if current != most_recent {
+                    info!(
+                        "Switching from {} to {} (most recent branch) after clone",
+                        current, most_recent
+                    );
+                    self.checkout_branch(target_path, &most_recent).await?;
+                }
+                Some(most_recent)
+            } else {
+                self.get_current_branch(target_path).await.ok().flatten()
+            }
+        } else {
+            self.get_current_branch(target_path).await.ok().flatten()
+        };
+
         Ok(SyncResult::Cloned {
             path: target_path.clone(),
+            branch,
         })
     }
 

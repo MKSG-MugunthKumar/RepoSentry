@@ -180,7 +180,9 @@ impl SyncEngine {
 
         for result in &results {
             match result {
-                SyncResult::Cloned { .. } | SyncResult::Pulled { .. } => successful_operations += 1,
+                SyncResult::Cloned { .. }
+                | SyncResult::Pulled { .. }
+                | SyncResult::BranchSwitched { .. } => successful_operations += 1,
                 SyncResult::FetchedOnly { .. } | SyncResult::UpToDate { .. } => {
                     successful_operations += 1
                 }
@@ -259,10 +261,12 @@ mod tests {
         let results = vec![
             SyncResult::Cloned {
                 path: PathBuf::from("/test/repo1"),
+                branch: Some("main".to_string()),
             },
             SyncResult::Pulled {
                 path: PathBuf::from("/test/repo2"),
                 commits_updated: 5,
+                branch: Some("main".to_string()),
             },
             SyncResult::Failed {
                 path: PathBuf::from("/test/repo3"),

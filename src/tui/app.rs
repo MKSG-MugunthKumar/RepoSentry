@@ -393,24 +393,37 @@ impl App {
                     // Send individual results as status updates
                     for result in &summary.results {
                         let msg = match result {
-                            SyncResult::Cloned { path } => {
+                            SyncResult::Cloned { path, branch } => {
                                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-                                format!("✓ Cloned: {}", name)
+                                let branch_info = branch.as_deref().map(|b| format!(" [{}]", b)).unwrap_or_default();
+                                format!("✓ Cloned: {}{}", name, branch_info)
                             }
                             SyncResult::Pulled {
                                 path,
                                 commits_updated,
+                                branch,
                             } => {
                                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-                                format!("✓ Pulled: {} ({} commits)", name, commits_updated)
+                                let branch_info = branch.as_deref().map(|b| format!(" [{}]", b)).unwrap_or_default();
+                                format!("✓ Pulled: {} ({} commits){}", name, commits_updated, branch_info)
+                            }
+                            SyncResult::BranchSwitched {
+                                path,
+                                from_branch,
+                                to_branch,
+                                commits_updated,
+                            } => {
+                                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                                format!("↻ Switched: {} ({} → {}, {} commits)", name, from_branch, to_branch, commits_updated)
                             }
                             SyncResult::FetchedOnly { path, reason } => {
                                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
                                 format!("⚠ Fetched only: {} ({})", name, reason)
                             }
-                            SyncResult::UpToDate { path } => {
+                            SyncResult::UpToDate { path, branch } => {
                                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-                                format!("• Up to date: {}", name)
+                                let branch_info = branch.as_deref().map(|b| format!(" [{}]", b)).unwrap_or_default();
+                                format!("• Up to date: {}{}", name, branch_info)
                             }
                             SyncResult::Skipped { path, reason } => {
                                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
